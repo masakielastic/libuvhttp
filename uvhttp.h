@@ -41,9 +41,6 @@ typedef struct http_server_config_s {
     http_request_handler_t on_headers; // Called after headers are parsed
     http_body_chunk_handler_t on_body_chunk; // Called for each body data chunk
     http_request_handler_t on_complete; // Called after the message is fully received
-    void* on_headers_user_data;
-    void* on_body_chunk_user_data;
-    void* on_complete_user_data;
     int tls_enabled;
     const char* cert_file;
     const char* key_file;
@@ -56,6 +53,8 @@ int http_server_listen(http_server_t* server);
 void http_server_close(http_server_t* server, uv_close_cb on_close);
 void http_server_destroy(http_server_t* server);
 uv_loop_t* http_server_loop(http_server_t* server);
+void http_server_set_user_data(http_server_t* server, void* user_data);
+void* http_server_get_user_data(http_server_t* server);
 
 
 // Request functions
@@ -108,6 +107,7 @@ struct http_server_s {
     uv_loop_t* loop;
     SSL_CTX* ssl_ctx;
     http_server_config_t config;
+    void* user_data;
 };
 
 typedef struct {
@@ -389,6 +389,8 @@ void http_server_destroy(http_server_t* server) {
 }
 
 uv_loop_t* http_server_loop(http_server_t* server) { return server->loop; }
+void http_server_set_user_data(http_server_t* server, void* user_data) { server->user_data = user_data; }
+void* http_server_get_user_data(http_server_t* server) { return server->user_data; }
 
 static void on_new_connection(uv_stream_t* server_stream, int status) {
     if (status < 0) {
@@ -401,8 +403,8 @@ static void on_new_connection(uv_stream_t* server_stream, int status) {
     uv_tcp_init(server->loop, &conn->tcp);
     conn->tcp.data = conn;
 
-    // Propagate user_data from config to each connection
-    conn->user_data = server->config.on_headers_user_data;
+    // Propagate the server's user_data to the connection's user_data
+    conn->user_data = server->user_data;
 
     if (uv_accept(server_stream, (uv_stream_t*)&conn->tcp) == 0) {
         if (server->config.tls_enabled) {

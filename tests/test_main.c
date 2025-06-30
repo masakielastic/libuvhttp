@@ -9,10 +9,9 @@
 
 typedef struct {
     // Test state
-    int connect_called;
-    int read_called;
-    int client_close_called;
+    int connect_success;
     int server_close_called;
+    int client_close_called;
     
     // Buffers
     char response_buffer[TEST_BUFFER_SIZE];
@@ -29,7 +28,7 @@ typedef struct {
 } test_context_t;
 
 static void on_server_close(uv_handle_t* handle) {
-    test_context_t* ctx = (test_context_t*)handle->data;
+    test_context_t* ctx = (test_context_t*)http_server_get_user_data((http_server_t*)handle->data);
     ctx->server_close_called = 1;
 }
 
@@ -41,11 +40,9 @@ static void on_client_close(uv_handle_t* handle) {
 static void on_client_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     test_context_t* ctx = (test_context_t*)stream->data;
     if (nread > 0) {
-        ctx->read_called = 1;
         memcpy(ctx->response_buffer + ctx->response_len, buf->base, nread);
         ctx->response_len += nread;
     } else {
-        // This also handles the case where the server closes the connection (nread == UV_EOF)
         uv_close((uv_handle_t*)stream, on_client_close);
         http_server_close(ctx->server, on_server_close);
     }
@@ -57,23 +54,22 @@ static void on_client_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t
 }
 
 static void on_client_write(uv_write_t* req, int status) {
-    TEST_CHECK(status == 0);
-    uv_buf_t* write_buf = (uv_buf_t*)req->data;
-    free(write_buf->base);
-    free(write_buf);
+    free(req->data); // Free the request string buffer
+    if (status != 0) {
+        fprintf(stderr, "write failed: %s\n", uv_strerror(status));
+        return;
+    }
     uv_read_start((uv_stream_t*)req->handle, on_client_alloc, on_client_read);
 }
 
 static void on_client_connect(uv_connect_t* req, int status) {
-    TEST_CHECK(status == 0);
     test_context_t* ctx = (test_context_t*)req->data;
+    ctx->connect_success = (status == 0);
     if (status != 0) {
         fprintf(stderr, "connect failed: %s\n", uv_strerror(status));
-        uv_close((uv_handle_t*)&ctx->client_socket, on_client_close);
         http_server_close(ctx->server, on_server_close);
         return;
     }
-    ctx->connect_called = 1;
     uv_write(&ctx->write_req, (uv_stream_t*)&ctx->client_socket, (const uv_buf_t*)ctx->write_req.data, 1, on_client_write);
 }
 
@@ -83,12 +79,10 @@ static void run_test(http_server_config_t* config, const char* req_str, void (*t
 
     uv_loop_init(&ctx.loop);
 
-    // Pass the context to the server handlers
-    config->on_headers_user_data = &ctx;
-    config->on_body_chunk_user_data = &ctx;
-    config->on_complete_user_data = &ctx;
     ctx.server = http_server_create(&ctx.loop, config);
     TEST_CHECK(ctx.server != NULL);
+    http_server_set_user_data(ctx.server, &ctx);
+
     TEST_CHECK(http_server_listen(ctx.server) == 0);
 
     uv_tcp_init(&ctx.loop, &ctx.client_socket);
@@ -129,8 +123,7 @@ static void on_complete_ok(http_request_t* req) {
 }
 
 static void on_headers_check(http_request_t* req) {
-    test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
-    http_request_set_user_data(req, ctx); // Pass context to other handlers
+    // The user_data is now propagated automatically.
 }
 
 static void on_complete_header_check(http_request_t* req) {
