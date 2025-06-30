@@ -224,10 +224,19 @@ static void connect_test_client(test_context_t* ctx, int port, const char* req_s
 }
 
 static void run_test(uvhttp_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
-    test_context_t* ctx = test_context_create(config->tls_enabled);
+    int is_tls = (config->port == TEST_TLS_PORT);
+    test_context_t* ctx = test_context_create(is_tls);
     TEST_CHECK(ctx != NULL);
 
     start_test_server(ctx, config);
+
+    if (is_tls) {
+        SSL_CTX* ssl_ctx = uvhttp_server_get_ssl_ctx(ctx->server);
+        TEST_CHECK(ssl_ctx != NULL);
+        TEST_CHECK(SSL_CTX_use_certificate_file(ssl_ctx, TEST_CERT_FILE, SSL_FILETYPE_PEM) > 0);
+        TEST_CHECK(SSL_CTX_use_PrivateKey_file(ssl_ctx, TEST_KEY_FILE, SSL_FILETYPE_PEM) > 0);
+    }
+
     connect_test_client(ctx, config->port, req_str);
 
     uv_run(&ctx->loop, UV_RUN_DEFAULT);
@@ -326,7 +335,7 @@ void test_parse_error(void) {
 }
 
 void test_header_parsing_tls(void) {
-    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check };
     const char* req = "GET / HTTP/1.1\r\n"
                       "X-Test-Header-1: Value1\r\n"
                       "X-Test-Header-2: Value2\r\n\r\n";
@@ -334,10 +343,11 @@ void test_header_parsing_tls(void) {
 }
 
 void test_chunked_response_tls(void) {
-    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_complete = on_complete_chunked_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_complete = on_complete_chunked_check };
     const char* req = "GET / HTTP/1.1\r\n\r\n";
     run_test(&config, req, NULL);
 }
+
 
 void test_slice_cmp(void) {
     uvhttp_str_t slice = {"hello", 5};
