@@ -123,7 +123,7 @@ static void on_complete_ok(http_request_t* req) {
 }
 
 static void on_headers_check(http_request_t* req) {
-    http_request_set_user_data(req, http_server_get_user_data(req->connection->server));
+    http_request_set_user_data(req, http_server_get_user_data(http_request_get_server(req)));
 }
 
 static void on_complete_header_check(http_request_t* req) {
