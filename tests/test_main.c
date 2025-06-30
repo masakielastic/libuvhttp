@@ -1,10 +1,13 @@
 #include "acutest.h"
 #include "../uvhttp.h"
 #include <uv.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 // --- Test Context & Client Logic ---
 
 #define TEST_PORT 8888
+#define TEST_TLS_PORT 8889
 #define TEST_BUFFER_SIZE 1024
 
 typedef struct {
@@ -25,6 +28,13 @@ typedef struct {
     uv_tcp_t client_socket;
     uv_connect_t connect_req;
     uv_write_t write_req;
+
+    // TLS client state
+    SSL_CTX* ssl_ctx;
+    SSL* ssl;
+    BIO* read_bio;
+    BIO* write_bio;
+    int tls_handshake_complete;
 } test_context_t;
 
 static void on_server_close(uv_handle_t* handle) {
@@ -96,7 +106,7 @@ static void run_test(http_server_config_t* config, const char* req_str, void (*t
     ctx.write_req.data = write_buf;
 
     struct sockaddr_in dest;
-    uv_ip4_addr("127.0.0.1", TEST_PORT, &dest);
+    uv_ip4_addr("127.0.0.1", config->tls_enabled ? TEST_TLS_PORT : TEST_PORT, &dest);
     uv_tcp_connect(&ctx.connect_req, &ctx.client_socket, (const struct sockaddr*)&dest, on_client_connect);
 
     uv_run(&ctx.loop, UV_RUN_DEFAULT);

@@ -15,6 +15,8 @@ SRC_chunked_server = examples/chunked_server.c uvhttp.c llhttp.c api.c http.c
 # Test executable
 TEST_TARGET = run_tests
 TEST_SRC = tests/test_main.c uvhttp.c llhttp.c api.c http.c
+TEST_CERT = tests/test_cert.pem
+TEST_KEY = tests/test_key.pem
 
 .PHONY: all clean run-simple run-tls run-chunked test help
 
@@ -44,12 +46,18 @@ run-chunked: chunked_server
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
-$(TEST_TARGET): $(TEST_SRC) uvhttp.h
+$(TEST_TARGET): $(TEST_SRC) $(TEST_CERT)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(LDLIBS)
+
+$(TEST_CERT):
+	@echo "Generating test certificate..."
+	@openssl req -x509 -newkey rsa:2048 -nodes \
+		-keyout $(TEST_KEY) -out $(TEST_CERT) -days 365 \
+		-subj "/C=XX/ST=Test/L=Test/O=Test/OU=Test/CN=localhost"
 
 # Clean up build artifacts
 clean:
-	rm -f $(TARGETS) $(TEST_TARGET)
+	rm -f $(TARGETS) $(TEST_TARGET) $(TEST_CERT) $(TEST_KEY)
 
 # Show help
 help:
@@ -60,6 +68,6 @@ help:
 	@echo "  run-simple  Run the simple HTTP server. Use ARGS to pass arguments (e.g., make run-simple ARGS=8080)"
 	@echo "  run-tls     Run the TLS (HTTPS) server. Use ARGS to pass arguments (e.g., make run-tls ARGS=8443)"
 	@echo "  run-chunked Run the chunked response server"
-	@echo "  test        Build and run the tests"
-	@echo "  clean       Remove build artifacts"
+	@echo "  test        Build and run the tests (generates certs if needed)"
+	@echo "  clean       Remove build artifacts and test certificates"
 	@echo "  help        Show this help message"
