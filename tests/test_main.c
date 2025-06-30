@@ -30,7 +30,7 @@ typedef struct {
 
     // libuv handles
     uv_loop_t loop;
-    http_server_t* server;
+    uvhttp_server_t* server;
     uv_tcp_t client_socket;
     uv_connect_t connect_req;
     uv_write_t write_req;
@@ -44,7 +44,7 @@ typedef struct {
 } test_context_t;
 
 static void on_server_close(uv_handle_t* handle) {
-    test_context_t* ctx = (test_context_t*)http_server_get_user_data((http_server_t*)handle->data);
+    test_context_t* ctx = (test_context_t*)uvhttp_server_get_user_data((uvhttp_server_t*)handle->data);
     ctx->server_close_called = 1;
 }
 
@@ -72,7 +72,7 @@ static void on_client_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* b
             if (!ctx->tls_handshake_complete) {
                 if (client_do_handshake(ctx) < 0) {
                     uv_close((uv_handle_t*)stream, on_client_close);
-                    http_server_close(ctx->server, on_server_close);
+                    uvhttp_server_close(ctx->server, on_server_close);
                     return;
                 }
             }
@@ -87,7 +87,7 @@ static void on_client_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* b
         }
     } else {
         uv_close((uv_handle_t*)stream, on_client_close);
-        http_server_close(ctx->server, on_server_close);
+        uvhttp_server_close(ctx->server, on_server_close);
     }
 }
 
@@ -165,7 +165,7 @@ static void on_client_connect(uv_connect_t* req, int status) {
     ctx->connect_success = (status == 0);
     if (status != 0) {
         fprintf(stderr, "connect failed: %s\n", uv_strerror(status));
-        http_server_close(ctx->server, on_server_close);
+        uvhttp_server_close(ctx->server, on_server_close);
         return;
     }
     if (ctx->tls_enabled) {
@@ -176,18 +176,18 @@ static void on_client_connect(uv_connect_t* req, int status) {
     }
 }
 
-static void run_test(http_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
+static void run_test(uvhttp_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
     test_context_t* ctx = (test_context_t*)calloc(1, sizeof(test_context_t));
     TEST_CHECK(ctx != NULL);
     ctx->tls_enabled = config->tls_enabled;
 
     uv_loop_init(&ctx->loop);
 
-    ctx->server = http_server_create(&ctx->loop, config);
+    ctx->server = uvhttp_server_create(&ctx->loop, config);
     TEST_CHECK(ctx->server != NULL);
-    http_server_set_user_data(ctx->server, ctx);
+    uvhttp_server_set_user_data(ctx->server, ctx);
 
-    TEST_CHECK(http_server_listen(ctx->server) == 0);
+    TEST_CHECK(uvhttp_server_listen(ctx->server) == 0);
 
     uv_tcp_init(&ctx->loop, &ctx->client_socket);
     ctx->client_socket.data = ctx;
@@ -218,63 +218,63 @@ static void run_test(http_server_config_t* config, const char* req_str, void (*t
         test_assertions(ctx);
     }
 
-    http_server_destroy(ctx->server);
+    uvhttp_server_destroy(ctx->server);
     uv_loop_close(&ctx->loop);
     free(ctx);
 }
 
 // --- Test Handlers ---
-static void on_body_chunk_test(http_request_t* req, const uvhttp_str_t* chunk) {
-    test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
+static void on_body_chunk_test(uvhttp_request_t* req, const uvhttp_str_t* chunk) {
+    test_context_t* ctx = (test_context_t*)uvhttp_request_get_user_data(req);
     if (chunk->length > 0) {
         memcpy(ctx->received_body + ctx->received_body_len, chunk->at, chunk->length);
         ctx->received_body_len += chunk->length;
     }
 }
 
-static void on_complete_ok(http_request_t* req) {
-    http_respond_simple(req, 200, "text/plain", "OK", 2);
+static void on_complete_ok(uvhttp_request_t* req) {
+    uvhttp_respond_simple(req, 200, "text/plain", "OK", 2);
 }
 
-static void on_headers_check(http_request_t* req) {
-    http_request_set_user_data(req, http_server_get_user_data(http_request_get_server(req)));
+static void on_headers_check(uvhttp_request_t* req) {
+    uvhttp_request_set_user_data(req, uvhttp_server_get_user_data(uvhttp_request_get_server(req)));
 }
 
-static void on_complete_header_check(http_request_t* req) {
-    uvhttp_str_t h1 = http_request_header(req, "X-Test-Header-1");
-    uvhttp_str_t h2 = http_request_header(req, "X-Test-Header-2");
+static void on_complete_header_check(uvhttp_request_t* req) {
+    uvhttp_str_t h1 = uvhttp_request_header(req, "X-Test-Header-1");
+    uvhttp_str_t h2 = uvhttp_request_header(req, "X-Test-Header-2");
     TEST_CHECK(uvhttp_str_cmp(&h1, "Value1") == 0);
     TEST_CHECK(uvhttp_str_cmp(&h2, "Value2") == 0);
     on_complete_ok(req);
 }
 
-static void on_complete_post_check(http_request_t* req) {
-    test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
+static void on_complete_post_check(uvhttp_request_t* req) {
+    test_context_t* ctx = (test_context_t*)uvhttp_request_get_user_data(req);
     TEST_CHECK(ctx->received_body_len == 9);
     TEST_CHECK(strncmp(ctx->received_body, "key=value", 9) == 0);
     on_complete_ok(req);
 }
 
-static void on_complete_chunked_check(http_request_t* req) {
-    http_response_t* res = http_response_init();
-    http_response_status(res, 200);
-    http_response_header(res, "Content-Type", "text/plain");
-    http_respond_chunked_start(req, res);
-    http_response_destroy(res);
-    http_respond_chunk(req, "chunk1", 6);
-    http_respond_chunk(req, "chunk2", 6);
-    http_respond_chunked_end(req);
+static void on_complete_chunked_check(uvhttp_request_t* req) {
+    uvhttp_response_t* res = uvhttp_response_init();
+    uvhttp_response_status(res, 200);
+    uvhttp_response_header(res, "Content-Type", "text/plain");
+    uvhttp_respond_chunked_start(req, res);
+    uvhttp_response_destroy(res);
+    uvhttp_respond_chunk(req, "chunk1", 6);
+    uvhttp_respond_chunk(req, "chunk2", 6);
+    uvhttp_respond_chunked_end(req);
 }
 
-static void on_error_check(http_request_t* req, int err, const char* msg) {
-    test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
+static void on_error_check(uvhttp_request_t* req, int err, const char* msg) {
+    test_context_t* ctx = (test_context_t*)uvhttp_request_get_user_data(req);
     ctx->error_cb_called = 1;
     TEST_CHECK(err == HPE_INVALID_METHOD);
 }
 
 // --- Test Cases ---
 void test_header_parsing(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check };
     const char* req = "GET / HTTP/1.1\r\n"
                       "X-Test-Header-1: Value1\r\n"
                       "X-Test-Header-2: Value2\r\n\r\n";
@@ -282,7 +282,7 @@ void test_header_parsing(void) {
 }
 
 void test_post_request(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_headers = on_headers_check, .on_body_chunk = on_body_chunk_test, .on_complete = on_complete_post_check };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_headers = on_headers_check, .on_body_chunk = on_body_chunk_test, .on_complete = on_complete_post_check };
     const char* req = "POST / HTTP/1.1\r\n"
                       "Content-Length: 9\r\n\r\n"
                       "key=value";
@@ -290,7 +290,7 @@ void test_post_request(void) {
 }
 
 void test_body_too_large(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_complete = on_complete_ok, .max_body_size = 5 };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_complete = on_complete_ok, .max_body_size = 5 };
     const char* req = "POST / HTTP/1.1\r\n"
                       "Content-Length: 10\r\n\r\n"
                       "0123456789";
@@ -298,19 +298,19 @@ void test_body_too_large(void) {
 }
 
 void test_chunked_response(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_complete = on_complete_chunked_check };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_complete = on_complete_chunked_check };
     const char* req = "GET / HTTP/1.1\r\n\r\n";
     run_test(&config, req, NULL);
 }
 
 void test_parse_error(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_error = on_error_check };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_error = on_error_check };
     const char* req = "INVALID METHOD / HTTP/1.1\r\n\r\n";
     run_test(&config, req, NULL);
 }
 
 void test_header_parsing_tls(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
     const char* req = "GET / HTTP/1.1\r\n"
                       "X-Test-Header-1: Value1\r\n"
                       "X-Test-Header-2: Value2\r\n\r\n";
@@ -318,7 +318,7 @@ void test_header_parsing_tls(void) {
 }
 
 void test_chunked_response_tls(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_complete = on_complete_chunked_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
+    uvhttp_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_complete = on_complete_chunked_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
     const char* req = "GET / HTTP/1.1\r\n\r\n";
     run_test(&config, req, NULL);
 }

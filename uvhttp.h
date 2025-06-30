@@ -10,10 +10,10 @@ extern "C" {
 #include <uv.h>
 
 // Forward declarations
-struct http_server_s;
-struct http_request_s;
-struct http_response_s;
-struct http_server_config_s;
+struct uvhttp_server_s;
+struct uvhttp_request_s;
+struct uvhttp_response_s;
+struct uvhttp_server_config_s;
 
 // A string slice structure for zero-copy parsing
 typedef struct {
@@ -22,50 +22,50 @@ typedef struct {
 } uvhttp_str_t;
 
 // Callback types
-typedef void (*http_request_handler_t)(struct http_request_s* request);
-typedef void (*http_body_chunk_handler_t)(struct http_request_s* request, const uvhttp_str_t* chunk);
-typedef void (*http_error_handler_t)(struct http_request_s* request, int error_code, const char* message);
+typedef void (*uvhttp_request_handler_t)(struct uvhttp_request_s* request);
+typedef void (*uvhttp_body_chunk_handler_t)(struct uvhttp_request_s* request, const uvhttp_str_t* chunk);
+typedef void (*uvhttp_error_handler_t)(struct uvhttp_request_s* request, int error_code, const char* message);
 
 // HTTP server structure (opaque)
-typedef struct http_server_s http_server_t;
+typedef struct uvhttp_server_s uvhttp_server_t;
 
 // HTTP request structure (opaque)
-typedef struct http_request_s http_request_t;
+typedef struct uvhttp_request_s uvhttp_request_t;
 
 // HTTP response structure (opaque)
-typedef struct http_response_s http_response_t;
+typedef struct uvhttp_response_s uvhttp_response_t;
 
 // HTTP server configuration structure
-typedef struct http_server_config_s {
+typedef struct uvhttp_server_config_s {
     const char* host;
     int port;
-    http_request_handler_t on_headers; // Called after headers are parsed
-    http_body_chunk_handler_t on_body_chunk; // Called for each body data chunk
-    http_request_handler_t on_complete; // Called after the message is fully received
-    http_error_handler_t on_error; // Called on parse error
+    uvhttp_request_handler_t on_headers; // Called after headers are parsed
+    uvhttp_body_chunk_handler_t on_body_chunk; // Called for each body data chunk
+    uvhttp_request_handler_t on_complete; // Called after the message is fully received
+    uvhttp_error_handler_t on_error; // Called on parse error
     int tls_enabled;
     const char* cert_file;
     const char* key_file;
     size_t max_body_size; // Max allowed body size, 0 for unlimited
-} http_server_config_t;
+} uvhttp_server_config_t;
 
 // Server management functions
-http_server_t* http_server_create(uv_loop_t* loop, const http_server_config_t* config);
-int http_server_listen(http_server_t* server);
-void http_server_close(http_server_t* server, uv_close_cb on_close);
-void http_server_destroy(http_server_t* server);
-uv_loop_t* http_server_loop(http_server_t* server);
-void http_server_set_user_data(http_server_t* server, void* user_data);
-void* http_server_get_user_data(http_server_t* server);
+uvhttp_server_t* uvhttp_server_create(uv_loop_t* loop, const uvhttp_server_config_t* config);
+int uvhttp_server_listen(uvhttp_server_t* server);
+void uvhttp_server_close(uvhttp_server_t* server, uv_close_cb on_close);
+void uvhttp_server_destroy(uvhttp_server_t* server);
+uv_loop_t* uvhttp_server_loop(uvhttp_server_t* server);
+void uvhttp_server_set_user_data(uvhttp_server_t* server, void* user_data);
+void* uvhttp_server_get_user_data(uvhttp_server_t* server);
 
 
 // Request functions
-http_server_t* http_request_get_server(http_request_t* request);
-uvhttp_str_t http_request_method(http_request_t* request);
-uvhttp_str_t http_request_target(http_request_t* request);
-uvhttp_str_t http_request_header(http_request_t* request, const char* name);
-void* http_request_get_user_data(http_request_t* request);
-void http_request_set_user_data(http_request_t* request, void* user_data);
+uvhttp_server_t* uvhttp_request_get_server(uvhttp_request_t* request);
+uvhttp_str_t uvhttp_request_method(uvhttp_request_t* request);
+uvhttp_str_t uvhttp_request_target(uvhttp_request_t* request);
+uvhttp_str_t uvhttp_request_header(uvhttp_request_t* request, const char* name);
+void* uvhttp_request_get_user_data(uvhttp_request_t* request);
+void uvhttp_request_set_user_data(uvhttp_request_t* request, void* user_data);
 
 // String slice helpers
 int uvhttp_str_cmp(const uvhttp_str_t* slice, const char* str);
@@ -73,16 +73,16 @@ void uvhttp_str_print(const uvhttp_str_t* slice);
 
 
 // Response functions
-http_response_t* http_response_init(void);
-void http_response_status(http_response_t* response, int status);
-void http_response_header(http_response_t* response, const char* name, const char* value);
-void http_response_body(http_response_t* response, const char* body, size_t length);
-int http_respond(http_request_t* request, http_response_t* response);
-void http_response_destroy(http_response_t* response);
-int http_respond_simple(http_request_t* req, int status, const char* content_type, const char* body, size_t body_length);
-int http_respond_chunked_start(http_request_t* req, http_response_t* res);
-int http_respond_chunk(http_request_t* req, const char* data, size_t length);
-int http_respond_chunked_end(http_request_t* req);
+uvhttp_response_t* uvhttp_response_init(void);
+void uvhttp_response_status(uvhttp_response_t* response, int status);
+void uvhttp_response_header(uvhttp_response_t* response, const char* name, const char* value);
+void uvhttp_response_body(uvhttp_response_t* response, const char* body, size_t length);
+int uvhttp_respond(uvhttp_request_t* request, uvhttp_response_t* response);
+void uvhttp_response_destroy(uvhttp_response_t* response);
+int uvhttp_respond_simple(uvhttp_request_t* req, int status, const char* content_type, const char* body, size_t body_length);
+int uvhttp_respond_chunked_start(uvhttp_request_t* req, uvhttp_response_t* res);
+int uvhttp_respond_chunk(uvhttp_request_t* req, const char* data, size_t length);
+int uvhttp_respond_chunked_end(uvhttp_request_t* req);
 
 
 #ifdef __cplusplus
@@ -109,11 +109,11 @@ int http_respond_chunked_end(http_request_t* req);
 #define READ_BUFFER_SIZE (64 * 1024)
 
 // Internal structures
-struct http_server_s {
+struct uvhttp_server_s {
     uv_tcp_t tcp;
     uv_loop_t* loop;
     SSL_CTX* ssl_ctx;
-    http_server_config_t config;
+    uvhttp_server_config_t config;
     void* user_data;
 };
 
@@ -125,7 +125,7 @@ typedef struct {
     llhttp_t parser;
     llhttp_settings_t parser_settings;
     int handshake_complete;
-    http_server_t* server;
+    uvhttp_server_t* server;
     
     char read_buffer[READ_BUFFER_SIZE]; // Per-connection read buffer
 
@@ -136,13 +136,13 @@ typedef struct {
     uvhttp_str_t current_header_field;
 
     void* user_data;
-} http_connection_t;
+} uvhttp_connection_t;
 
-struct http_request_s {
-    http_connection_t* connection;
+struct uvhttp_request_s {
+    uvhttp_connection_t* connection;
 };
 
-struct http_response_s {
+struct uvhttp_response_s {
     int status_code;
     char* headers[MAX_HEADERS][2];
     int header_count;
@@ -172,18 +172,18 @@ static int on_headers_complete(llhttp_t* parser);
 static int on_body(llhttp_t* parser, const char* at, size_t length);
 static int on_message_complete(llhttp_t* parser);
 
-static void flush_write_bio(http_connection_t* conn, uv_write_cb cb);
-static int handle_tls_handshake(http_connection_t* conn);
+static void flush_write_bio(uvhttp_connection_t* conn, uv_write_cb cb);
+static int handle_tls_handshake(uvhttp_connection_t* conn);
 
 // --- Function Implementations ---
 
-http_server_t* http_request_get_server(http_request_t* request) { return request->connection->server; }
-uvhttp_str_t http_request_method(http_request_t* request) { return request->connection->method; }
-uvhttp_str_t http_request_target(http_request_t* request) { return request->connection->url; }
-void* http_request_get_user_data(http_request_t* request) { return request->connection->user_data; }
-void http_request_set_user_data(http_request_t* request, void* user_data) { request->connection->user_data = user_data; }
+uvhttp_server_t* uvhttp_request_get_server(uvhttp_request_t* request) { return request->connection->server; }
+uvhttp_str_t uvhttp_request_method(uvhttp_request_t* request) { return request->connection->method; }
+uvhttp_str_t uvhttp_request_target(uvhttp_request_t* request) { return request->connection->url; }
+void* uvhttp_request_get_user_data(uvhttp_request_t* request) { return request->connection->user_data; }
+void uvhttp_request_set_user_data(uvhttp_request_t* request, void* user_data) { request->connection->user_data = user_data; }
 
-uvhttp_str_t http_request_header(http_request_t* request, const char* name) {
+uvhttp_str_t uvhttp_request_header(uvhttp_request_t* request, const char* name) {
     for (int i = 0; i < request->connection->header_count; i++) {
         if (uvhttp_str_cmp(&request->connection->headers[i][0], name) == 0) {
             return request->connection->headers[i][1];
@@ -210,15 +210,15 @@ void uvhttp_str_print(const uvhttp_str_t* slice) {
     }
 }
 
-http_response_t* http_response_init(void) {
-    http_response_t* response = (http_response_t*)calloc(1, sizeof(http_response_t));
+uvhttp_response_t* uvhttp_response_init(void) {
+    uvhttp_response_t* response = (uvhttp_response_t*)calloc(1, sizeof(uvhttp_response_t));
     response->status_code = 200;
     return response;
 }
 
-void http_response_status(http_response_t* response, int status) { response->status_code = status; }
+void uvhttp_response_status(uvhttp_response_t* response, int status) { response->status_code = status; }
 
-void http_response_header(http_response_t* response, const char* name, const char* value) {
+void uvhttp_response_header(uvhttp_response_t* response, const char* name, const char* value) {
     if (response->header_count < MAX_HEADERS) {
         response->headers[response->header_count][0] = strdup(name);
         response->headers[response->header_count][1] = strdup(value);
@@ -226,7 +226,7 @@ void http_response_header(http_response_t* response, const char* name, const cha
     }
 }
 
-void http_response_body(http_response_t* response, const char* body, size_t length) {
+void uvhttp_response_body(uvhttp_response_t* response, const char* body, size_t length) {
     if (response->body) {
         free(response->body);
     }
@@ -235,7 +235,7 @@ void http_response_body(http_response_t* response, const char* body, size_t leng
     response->body_length = length;
 }
 
-void http_response_destroy(http_response_t* response) {
+void uvhttp_response_destroy(uvhttp_response_t* response) {
     for (int i = 0; i < response->header_count; i++) {
         free(response->headers[i][0]);
         free(response->headers[i][1]);
@@ -261,8 +261,8 @@ static void on_transient_write_cb(uv_write_t* req, int status) {
     free(write_req);
 }
 
-int http_respond(http_request_t* request, http_response_t* response) {
-    http_connection_t* conn = request->connection;
+int uvhttp_respond(uvhttp_request_t* request, uvhttp_response_t* response) {
+    uvhttp_connection_t* conn = request->connection;
 
     if (conn->server->config.tls_enabled) {
         // For TLS, we still need to buffer everything to pass it to SSL_write
@@ -340,23 +340,23 @@ int http_respond(http_request_t* request, http_response_t* response) {
     return 0;
 }
 
-int http_respond_simple(http_request_t* req, int status, const char* content_type, const char* body, size_t body_length) {
-    http_response_t* res = http_response_init();
-    http_response_status(res, status);
+int uvhttp_respond_simple(uvhttp_request_t* req, int status, const char* content_type, const char* body, size_t body_length) {
+    uvhttp_response_t* res = uvhttp_response_init();
+    uvhttp_response_status(res, status);
     if (content_type) {
-        http_response_header(res, "Content-Type", content_type);
+        uvhttp_response_header(res, "Content-Type", content_type);
     }
     if (body && body_length > 0) {
-        http_response_body(res, body, body_length);
+        uvhttp_response_body(res, body, body_length);
     }
-    int r = http_respond(req, res);
-    http_response_destroy(res);
+    int r = uvhttp_respond(req, res);
+    uvhttp_response_destroy(res);
     return r;
 }
 
-int http_respond_chunked_start(http_request_t* req, http_response_t* res) {
-    http_connection_t* conn = req->connection;
-    http_response_header(res, "Transfer-Encoding", "chunked");
+int uvhttp_respond_chunked_start(uvhttp_request_t* req, uvhttp_response_t* res) {
+    uvhttp_connection_t* conn = req->connection;
+    uvhttp_response_header(res, "Transfer-Encoding", "chunked");
     
     char status_line[128];
     int status_len = snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d OK\r\n", res->status_code);
@@ -386,9 +386,9 @@ int http_respond_chunked_start(http_request_t* req, http_response_t* res) {
     return 0;
 }
 
-int http_respond_chunk(http_request_t* req, const char* data, size_t length) {
+int uvhttp_respond_chunk(uvhttp_request_t* req, const char* data, size_t length) {
     if (length == 0) return 0;
-    http_connection_t* conn = req->connection;
+    uvhttp_connection_t* conn = req->connection;
 
     char size_hex[16];
     int size_len = snprintf(size_hex, sizeof(size_hex), "%zx\r\n", length);
@@ -411,8 +411,8 @@ int http_respond_chunk(http_request_t* req, const char* data, size_t length) {
     return 0;
 }
 
-int http_respond_chunked_end(http_request_t* req) {
-    http_connection_t* conn = req->connection;
+int uvhttp_respond_chunked_end(uvhttp_request_t* req) {
+    uvhttp_connection_t* conn = req->connection;
     if (conn->server->config.tls_enabled) {
         SSL_write(conn->ssl, "0\r\n\r\n", 5);
         flush_write_bio(conn, on_final_write_cb);
@@ -426,10 +426,10 @@ int http_respond_chunked_end(http_request_t* req) {
 }
 
 
-http_server_t* http_server_create(uv_loop_t* loop, const http_server_config_t* config) {
-    http_server_t* server = (http_server_t*)calloc(1, sizeof(http_server_t));
+uvhttp_server_t* uvhttp_server_create(uv_loop_t* loop, const uvhttp_server_config_t* config) {
+    uvhttp_server_t* server = (uvhttp_server_t*)calloc(1, sizeof(uvhttp_server_t));
     server->loop = loop;
-    memcpy(&server->config, config, sizeof(http_server_config_t));
+    memcpy(&server->config, config, sizeof(uvhttp_server_config_t));
     
     if (server->config.tls_enabled) {
         SSL_library_init();
@@ -445,7 +445,7 @@ http_server_t* http_server_create(uv_loop_t* loop, const http_server_config_t* c
     return server;
 }
 
-int http_server_listen(http_server_t* server) {
+int uvhttp_server_listen(uvhttp_server_t* server) {
     uv_tcp_init(server->loop, &server->tcp);
     struct sockaddr_in addr;
     uv_ip4_addr(server->config.host, server->config.port, &addr);
@@ -459,26 +459,26 @@ int http_server_listen(http_server_t* server) {
     return 0;
 }
 
-void http_server_close(http_server_t* server, uv_close_cb on_server_close) {
+void uvhttp_server_close(uvhttp_server_t* server, uv_close_cb on_server_close) {
     uv_close((uv_handle_t*)&server->tcp, on_server_close);
 }
 
-void http_server_destroy(http_server_t* server) {
+void uvhttp_server_destroy(uvhttp_server_t* server) {
     if (server->ssl_ctx) SSL_CTX_free(server->ssl_ctx);
     free(server);
 }
 
-uv_loop_t* http_server_loop(http_server_t* server) { return server->loop; }
-void http_server_set_user_data(http_server_t* server, void* user_data) { server->user_data = user_data; }
-void* http_server_get_user_data(http_server_t* server) { return server->user_data; }
+uv_loop_t* uvhttp_server_loop(uvhttp_server_t* server) { return server->loop; }
+void uvhttp_server_set_user_data(uvhttp_server_t* server, void* user_data) { server->user_data = user_data; }
+void* uvhttp_server_get_user_data(uvhttp_server_t* server) { return server->user_data; }
 
 static void on_new_connection(uv_stream_t* server_stream, int status) {
     if (status < 0) {
         fprintf(stderr, "New connection error %s\n", uv_strerror(status));
         return;
     }
-    http_server_t* server = (http_server_t*)server_stream->data;
-    http_connection_t* conn = (http_connection_t*)calloc(1, sizeof(http_connection_t));
+    uvhttp_server_t* server = (uvhttp_server_t*)server_stream->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)calloc(1, sizeof(uvhttp_connection_t));
     conn->server = server;
     uv_tcp_init(server->loop, &conn->tcp);
     conn->tcp.data = conn;
@@ -511,19 +511,19 @@ static void on_new_connection(uv_stream_t* server_stream, int status) {
 }
 
 static void on_close(uv_handle_t* handle) {
-    http_connection_t* conn = (http_connection_t*)handle->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)handle->data;
     if (conn->ssl) SSL_free(conn->ssl);
     free(conn);
 }
 
 static void on_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
-    http_connection_t* conn = (http_connection_t*)handle->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)handle->data;
     buf->base = conn->read_buffer;
     buf->len = READ_BUFFER_SIZE;
 }
 
 static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
-    http_connection_t* conn = (http_connection_t*)stream->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)stream->data;
     if (nread > 0) {
         llhttp_errno_t err;
         if (conn->server->config.tls_enabled) {
@@ -554,7 +554,7 @@ static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
 
 error:
     if (conn->server->config.on_error) {
-        http_request_t request = { .connection = conn };
+        uvhttp_request_t request = { .connection = conn };
         conn->server->config.on_error(&request, llhttp_get_errno(&conn->parser), conn->parser.reason);
     } else {
         fprintf(stderr, "Parse error: %s %s\n", llhttp_errno_name(llhttp_get_errno(&conn->parser)), conn->parser.reason);
@@ -562,7 +562,7 @@ error:
     uv_close((uv_handle_t*)stream, on_close);
 }
 
-static void flush_write_bio(http_connection_t* conn, uv_write_cb cb) {
+static void flush_write_bio(uvhttp_connection_t* conn, uv_write_cb cb) {
     int pending = BIO_pending(conn->write_bio);
     if (pending > 0) {
         char* buf_data = (char*)malloc(pending);
@@ -578,7 +578,7 @@ static void flush_write_bio(http_connection_t* conn, uv_write_cb cb) {
     }
 }
 
-static int handle_tls_handshake(http_connection_t* conn) {
+static int handle_tls_handshake(uvhttp_connection_t* conn) {
     int r = SSL_do_handshake(conn->ssl);
     flush_write_bio(conn, on_transient_write_cb);
     if (r == 1) {
@@ -593,20 +593,20 @@ static int handle_tls_handshake(http_connection_t* conn) {
 }
 
 static int on_message_begin(llhttp_t* parser) {
-    http_connection_t* conn = (http_connection_t*)parser->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
     conn->header_count = 0;
     return 0;
 }
 
 static int on_url(llhttp_t* parser, const char* at, size_t length) {
-    http_connection_t* conn = (http_connection_t*)parser->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
     conn->url.at = at;
     conn->url.length = length;
     return 0;
 }
 
 static int on_header_field(llhttp_t* parser, const char* at, size_t length) {
-    http_connection_t* conn = (http_connection_t*)parser->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
     if (conn->header_count > 0 && conn->headers[conn->header_count - 1][1].at == NULL) {
         conn->headers[conn->header_count - 1][1].at = at;
         conn->headers[conn->header_count - 1][1].length = 0;
@@ -622,7 +622,7 @@ static int on_header_field(llhttp_t* parser, const char* at, size_t length) {
 }
 
 static int on_header_value(llhttp_t* parser, const char* at, size_t length) {
-    http_connection_t* conn = (http_connection_t*)parser->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
     if (conn->header_count < MAX_HEADERS) {
         conn->headers[conn->header_count][1].at = at;
         conn->headers[conn->header_count][1].length = length;
@@ -632,7 +632,7 @@ static int on_header_value(llhttp_t* parser, const char* at, size_t length) {
 }
 
 static int on_headers_complete(llhttp_t* parser) {
-    http_connection_t* conn = (http_connection_t*)parser->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
     const char* method_str = llhttp_method_name(llhttp_get_method(parser));
     conn->method.at = method_str;
     conn->method.length = strlen(method_str);
@@ -642,7 +642,7 @@ static int on_headers_complete(llhttp_t* parser) {
         return HPE_USER;
     }
     
-    http_request_t request = { .connection = conn };
+    uvhttp_request_t request = { .connection = conn };
     if (conn->server->config.on_headers) {
         conn->server->config.on_headers(&request);
     }
@@ -650,9 +650,9 @@ static int on_headers_complete(llhttp_t* parser) {
 }
 
 static int on_body(llhttp_t* parser, const char* at, size_t length) {
-    http_connection_t* conn = (http_connection_t*)parser->data;
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
     if (conn->server->config.on_body_chunk) {
-        http_request_t request = { .connection = conn };
+        uvhttp_request_t request = { .connection = conn };
         uvhttp_str_t chunk = { .at = at, .length = length };
         conn->server->config.on_body_chunk(&request, &chunk);
     }
@@ -660,8 +660,8 @@ static int on_body(llhttp_t* parser, const char* at, size_t length) {
 }
 
 static int on_message_complete(llhttp_t* parser) {
-    http_connection_t* conn = (http_connection_t*)parser->data;
-    http_request_t request = { .connection = conn };
+    uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
+    uvhttp_request_t request = { .connection = conn };
     if (conn->server->config.on_complete) {
         conn->server->config.on_complete(&request);
     }
