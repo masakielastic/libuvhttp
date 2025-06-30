@@ -458,23 +458,6 @@ error:
     uv_close((uv_handle_t*)stream, on_close);
 }
 
-static void on_final_write_cb(uv_write_t* req, int status) {
-    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)req;
-    if (write_req->buffer) {
-        free(write_req->buffer);
-    }
-    free(write_req);
-    uv_close((uv_handle_t*)req->handle, on_close);
-}
-
-static void on_transient_write_cb(uv_write_t* req, int status) {
-    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)req;
-    if (write_req->buffer) {
-        free(write_req->buffer);
-    }
-    free(write_req);
-}
-
 static void flush_write_bio(http_connection_t* conn, uv_write_cb cb) {
     int pending = BIO_pending(conn->write_bio);
     if (pending > 0) {
