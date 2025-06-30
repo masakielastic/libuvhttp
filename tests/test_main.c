@@ -176,12 +176,33 @@ static void on_client_connect(uv_connect_t* req, int status) {
     }
 }
 
-static void run_test(uvhttp_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
+static test_context_t* test_context_create(int tls_enabled) {
     test_context_t* ctx = (test_context_t*)calloc(1, sizeof(test_context_t));
-    TEST_CHECK(ctx != NULL);
-    ctx->tls_enabled = config->tls_enabled;
+    if (!ctx) return NULL;
 
+    ctx->tls_enabled = tls_enabled;
     uv_loop_init(&ctx->loop);
+
+    if (tls_enabled) {
+        ctx->ssl_ctx = SSL_CTX_new(TLS_client_method());
+        ctx->ssl = SSL_new(ctx->ssl_ctx);
+        ctx->read_bio = BIO_new(BIO_s_mem());
+        ctx->write_bio = BIO_new(BIO_s_mem());
+        SSL_set_bio(ctx->ssl, ctx->read_bio, ctx->write_bio);
+        SSL_set_connect_state(ctx->ssl);
+    }
+    return ctx;
+}
+
+static void test_context_destroy(test_context_t* ctx) {
+    uvhttp_server_destroy(ctx->server);
+    uv_loop_close(&ctx->loop);
+    free(ctx);
+}
+
+static void run_test(uvhttp_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
+    test_context_t* ctx = test_context_create(config->tls_enabled);
+    TEST_CHECK(ctx != NULL);
 
     ctx->server = uvhttp_server_create(&ctx->loop, config);
     TEST_CHECK(ctx->server != NULL);
@@ -199,15 +220,6 @@ static void run_test(uvhttp_server_config_t* config, const char* req_str, void (
     write_buf->len = strlen(req_str);
     ctx->write_req.data = write_buf;
 
-    if (ctx->tls_enabled) {
-        ctx->ssl_ctx = SSL_CTX_new(TLS_client_method());
-        ctx->ssl = SSL_new(ctx->ssl_ctx);
-        ctx->read_bio = BIO_new(BIO_s_mem());
-        ctx->write_bio = BIO_new(BIO_s_mem());
-        SSL_set_bio(ctx->ssl, ctx->read_bio, ctx->write_bio);
-        SSL_set_connect_state(ctx->ssl);
-    }
-
     struct sockaddr_in dest;
     uv_ip4_addr("127.0.0.1", config->port, &dest);
     uv_tcp_connect(&ctx->connect_req, &ctx->client_socket, (const struct sockaddr*)&dest, on_client_connect);
@@ -218,9 +230,7 @@ static void run_test(uvhttp_server_config_t* config, const char* req_str, void (
         test_assertions(ctx);
     }
 
-    uvhttp_server_destroy(ctx->server);
-    uv_loop_close(&ctx->loop);
-    free(ctx);
+    test_context_destroy(ctx);
 }
 
 // --- Test Handlers ---
