@@ -21,8 +21,9 @@ typedef struct {
     size_t length;
 } uvhttp_string_slice_t;
 
-// Request handler callback type
+// Callback types
 typedef void (*http_request_handler_t)(struct http_request_s* request);
+typedef void (*http_body_chunk_handler_t)(struct http_request_s* request, const uvhttp_string_slice_t* chunk);
 
 // HTTP server structure (opaque)
 typedef struct http_server_s http_server_t;
@@ -37,7 +38,9 @@ typedef struct http_response_s http_response_t;
 typedef struct http_server_config_s {
     const char* host;
     int port;
-    http_request_handler_t handler;
+    http_request_handler_t on_headers; // Called after headers are parsed
+    http_body_chunk_handler_t on_body_chunk; // Called for each body data chunk
+    http_request_handler_t on_complete; // Called after the message is fully received
     int tls_enabled;
     const char* cert_file;
     const char* key_file;
@@ -56,7 +59,6 @@ uv_loop_t* http_server_loop(http_server_t* server);
 uvhttp_string_slice_t http_request_method(http_request_t* request);
 uvhttp_string_slice_t http_request_target(http_request_t* request);
 uvhttp_string_slice_t http_request_header(http_request_t* request, const char* name);
-uvhttp_string_slice_t http_request_body(http_request_t* request);
 void* http_request_get_user_data(http_request_t* request);
 void http_request_set_user_data(http_request_t* request, void* user_data);
 
@@ -122,10 +124,6 @@ typedef struct {
     int header_count;
     uvhttp_string_slice_t current_header_field;
 
-    char* body;
-    size_t body_length;
-    size_t body_capacity;
-
     void* user_data;
 } http_connection_t;
 
@@ -170,10 +168,6 @@ static int handle_tls_handshake(http_connection_t* conn);
 
 uvhttp_string_slice_t http_request_method(http_request_t* request) { return request->connection->method; }
 uvhttp_string_slice_t http_request_target(http_request_t* request) { return request->connection->url; }
-uvhttp_string_slice_t http_request_body(http_request_t* request) {
-    uvhttp_string_slice_t slice = { request->connection->body, request->connection->body_length };
-    return slice;
-}
 void* http_request_get_user_data(http_request_t* request) { return request->connection->user_data; }
 void http_request_set_user_data(http_request_t* request, void* user_data) { request->connection->user_data = user_data; }
 
@@ -416,9 +410,6 @@ static void on_new_connection(uv_stream_t* server_stream, int status) {
 static void on_close(uv_handle_t* handle) {
     http_connection_t* conn = (http_connection_t*)handle->data;
     if (conn->ssl) SSL_free(conn->ssl);
-    if (conn->body) {
-        free(conn->body);
-    }
     free(conn);
 }
 
@@ -496,12 +487,6 @@ static int handle_tls_handshake(http_connection_t* conn) {
 static int on_message_begin(llhttp_t* parser) {
     http_connection_t* conn = (http_connection_t*)parser->data;
     conn->header_count = 0;
-    if (conn->body) {
-        free(conn->body);
-        conn->body = NULL;
-    }
-    conn->body_length = 0;
-    conn->body_capacity = 0;
     return 0;
 }
 
@@ -548,25 +533,20 @@ static int on_headers_complete(llhttp_t* parser) {
         llhttp_set_error_reason(parser, "Body size exceeds limit");
         return HPE_USER;
     }
+    
+    http_request_t request = { .connection = conn };
+    if (conn->server->config.on_headers) {
+        conn->server->config.on_headers(&request);
+    }
     return 0;
 }
 
 static int on_body(llhttp_t* parser, const char* at, size_t length) {
     http_connection_t* conn = (http_connection_t*)parser->data;
-    if (!conn->body) {
-        if (length > 0) {
-            conn->body = (char*)malloc(length);
-            conn->body_capacity = length;
-            memcpy(conn->body, at, length);
-            conn->body_length = length;
-        }
-    } else {
-        if (conn->body_length + length > conn->body_capacity) {
-            conn->body_capacity = (conn->body_length + length) * 2;
-            conn->body = (char*)realloc(conn->body, conn->body_capacity);
-        }
-        memcpy(conn->body + conn->body_length, at, length);
-        conn->body_length += length;
+    if (conn->server->config.on_body_chunk) {
+        http_request_t request = { .connection = conn };
+        uvhttp_string_slice_t chunk = { .at = at, .length = length };
+        conn->server->config.on_body_chunk(&request, &chunk);
     }
     return 0;
 }
@@ -574,7 +554,9 @@ static int on_body(llhttp_t* parser, const char* at, size_t length) {
 static int on_message_complete(llhttp_t* parser) {
     http_connection_t* conn = (http_connection_t*)parser->data;
     http_request_t request = { .connection = conn };
-    conn->server->config.handler(&request);
+    if (conn->server->config.on_complete) {
+        conn->server->config.on_complete(&request);
+    }
     return 0;
 }
 

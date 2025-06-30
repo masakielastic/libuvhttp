@@ -3,8 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Request handler
-void my_handler(http_request_t* req) {
+void on_request_complete(http_request_t* req) {
     printf("Request received: ");
     uvhttp_string_slice_t method = http_request_method(req);
     uvhttp_slice_print(&method);
@@ -41,7 +40,7 @@ int main(int argc, char *argv[]) {
     http_server_config_t config = {
         .host = "0.0.0.0",
         .port = port,
-        .handler = my_handler,
+        .on_complete = on_request_complete,
         .tls_enabled = 1, // Enable TLS
         .cert_file = "cert.pem",
         .key_file = "key.pem",
