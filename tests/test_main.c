@@ -86,39 +86,40 @@ static void on_client_connect(uv_connect_t* req, int status) {
 }
 
 static void run_test(http_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
-    test_context_t ctx;
-    memset(&ctx, 0, sizeof(ctx));
+    test_context_t* ctx = (test_context_t*)calloc(1, sizeof(test_context_t));
+    TEST_CHECK(ctx != NULL);
 
-    uv_loop_init(&ctx.loop);
+    uv_loop_init(&ctx->loop);
 
-    ctx.server = http_server_create(&ctx.loop, config);
-    TEST_CHECK(ctx.server != NULL);
-    http_server_set_user_data(ctx.server, &ctx);
+    ctx->server = http_server_create(&ctx->loop, config);
+    TEST_CHECK(ctx->server != NULL);
+    http_server_set_user_data(ctx->server, ctx);
 
-    TEST_CHECK(http_server_listen(ctx.server) == 0);
+    TEST_CHECK(http_server_listen(ctx->server) == 0);
 
-    uv_tcp_init(&ctx.loop, &ctx.client_socket);
-    ctx.client_socket.data = &ctx;
-    ctx.connect_req.data = &ctx;
-    ctx.write_req.handle = (uv_stream_t*)&ctx.client_socket;
+    uv_tcp_init(&ctx->loop, &ctx->client_socket);
+    ctx->client_socket.data = ctx;
+    ctx->connect_req.data = ctx;
+    ctx->write_req.handle = (uv_stream_t*)&ctx->client_socket;
     
     uv_buf_t* write_buf = malloc(sizeof(uv_buf_t));
     write_buf->base = strdup(req_str);
     write_buf->len = strlen(req_str);
-    ctx.write_req.data = write_buf;
+    ctx->write_req.data = write_buf;
 
     struct sockaddr_in dest;
     uv_ip4_addr("127.0.0.1", config->tls_enabled ? TEST_TLS_PORT : TEST_PORT, &dest);
-    uv_tcp_connect(&ctx.connect_req, &ctx.client_socket, (const struct sockaddr*)&dest, on_client_connect);
+    uv_tcp_connect(&ctx->connect_req, &ctx->client_socket, (const struct sockaddr*)&dest, on_client_connect);
 
-    uv_run(&ctx.loop, UV_RUN_DEFAULT);
+    uv_run(&ctx->loop, UV_RUN_DEFAULT);
 
     if (test_assertions) {
-        test_assertions(&ctx);
+        test_assertions(ctx);
     }
 
-    http_server_destroy(ctx.server);
-    uv_loop_close(&ctx.loop);
+    http_server_destroy(ctx->server);
+    uv_loop_close(&ctx->loop);
+    free(ctx);
 }
 
 // --- Test Handlers ---
