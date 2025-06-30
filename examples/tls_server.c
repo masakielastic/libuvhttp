@@ -12,18 +12,8 @@ void on_request_complete(http_request_t* req) {
     uvhttp_slice_print(&target);
     printf("\n");
 
-    // Create a response
-    http_response_t* res = http_response_init();
-    http_response_status(res, 200);
-    http_response_header(res, "Content-Type", "text/plain");
     const char* body = "Hello, World with TLS!";
-    http_response_body(res, body, strlen(body));
-
-    // Send the response
-    http_respond(req, res);
-
-    // Destroy the response object
-    http_response_destroy(res);
+    http_respond_simple(req, 200, "text/plain", body, strlen(body));
 }
 
 int main(int argc, char *argv[]) {

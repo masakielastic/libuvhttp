@@ -74,6 +74,7 @@ void http_response_header(http_response_t* response, const char* name, const cha
 void http_response_body(http_response_t* response, const char* body, size_t length);
 int http_respond(http_request_t* request, http_response_t* response);
 void http_response_destroy(http_response_t* response);
+int http_respond_simple(http_request_t* req, int status, const char* content_type, const char* body, size_t body_length);
 
 #ifdef __cplusplus
 }
@@ -326,6 +327,20 @@ int http_respond(http_request_t* request, http_response_t* response) {
     }
 
     return 0;
+}
+
+int http_respond_simple(http_request_t* req, int status, const char* content_type, const char* body, size_t body_length) {
+    http_response_t* res = http_response_init();
+    http_response_status(res, status);
+    if (content_type) {
+        http_response_header(res, "Content-Type", content_type);
+    }
+    if (body && body_length > 0) {
+        http_response_body(res, body, body_length);
+    }
+    int r = http_respond(req, res);
+    http_response_destroy(res);
+    return r;
 }
 
 http_server_t* http_server_create(uv_loop_t* loop, const http_server_config_t* config) {
