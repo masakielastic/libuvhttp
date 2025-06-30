@@ -200,29 +200,35 @@ static void test_context_destroy(test_context_t* ctx) {
     free(ctx);
 }
 
-static void run_test(uvhttp_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
-    test_context_t* ctx = test_context_create(config->tls_enabled);
-    TEST_CHECK(ctx != NULL);
-
+static void start_test_server(test_context_t* ctx, uvhttp_server_config_t* config) {
     ctx->server = uvhttp_server_create(&ctx->loop, config);
     TEST_CHECK(ctx->server != NULL);
     uvhttp_server_set_user_data(ctx->server, ctx);
-
     TEST_CHECK(uvhttp_server_listen(ctx->server) == 0);
+}
 
+static void connect_test_client(test_context_t* ctx, int port, const char* req_str) {
     uv_tcp_init(&ctx->loop, &ctx->client_socket);
     ctx->client_socket.data = ctx;
     ctx->connect_req.data = ctx;
     ctx->write_req.handle = (uv_stream_t*)&ctx->client_socket;
-    
+
     uv_buf_t* write_buf = malloc(sizeof(uv_buf_t));
     write_buf->base = strdup(req_str);
     write_buf->len = strlen(req_str);
     ctx->write_req.data = write_buf;
 
     struct sockaddr_in dest;
-    uv_ip4_addr("127.0.0.1", config->port, &dest);
+    uv_ip4_addr("127.0.0.1", port, &dest);
     uv_tcp_connect(&ctx->connect_req, &ctx->client_socket, (const struct sockaddr*)&dest, on_client_connect);
+}
+
+static void run_test(uvhttp_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
+    test_context_t* ctx = test_context_create(config->tls_enabled);
+    TEST_CHECK(ctx != NULL);
+
+    start_test_server(ctx, config);
+    connect_test_client(ctx, config->port, req_str);
 
     uv_run(&ctx->loop, UV_RUN_DEFAULT);
 
