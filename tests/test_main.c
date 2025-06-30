@@ -123,7 +123,7 @@ static void on_complete_ok(http_request_t* req) {
 }
 
 static void on_headers_check(http_request_t* req) {
-    // The user_data is now propagated automatically.
+    http_request_set_user_data(req, http_server_get_user_data(req->connection->server));
 }
 
 static void on_complete_header_check(http_request_t* req) {
@@ -139,6 +139,17 @@ static void on_complete_post_check(http_request_t* req) {
     TEST_CHECK(ctx->received_body_len == 9);
     TEST_CHECK(strncmp(ctx->received_body, "key=value", 9) == 0);
     on_complete_ok(req);
+}
+
+static void on_complete_chunked_check(http_request_t* req) {
+    http_response_t* res = http_response_init();
+    http_response_status(res, 200);
+    http_response_header(res, "Content-Type", "text/plain");
+    http_respond_chunked_start(req, res);
+    http_response_destroy(res);
+    http_respond_chunk(req, "chunk1", 6);
+    http_respond_chunk(req, "chunk2", 6);
+    http_respond_chunked_end(req);
 }
 
 // --- Test Cases ---
@@ -166,6 +177,12 @@ void test_body_too_large(void) {
     run_test(&config, req, NULL);
 }
 
+void test_chunked_response(void) {
+    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_complete = on_complete_chunked_check };
+    const char* req = "GET / HTTP/1.1\r\n\r\n";
+    run_test(&config, req, NULL);
+}
+
 void test_slice_cmp(void) {
     uvhttp_string_slice_t slice = {"hello", 5};
     TEST_CHECK(uvhttp_slice_cmp(&slice, "hello") == 0);
@@ -180,5 +197,6 @@ TEST_LIST = {
     { "server/header_parsing", test_header_parsing },
     { "server/post_request", test_post_request },
     { "server/body_too_large", test_body_too_large },
+    { "server/chunked_response", test_chunked_response },
     { NULL, NULL }
 };

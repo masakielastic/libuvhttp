@@ -58,6 +58,7 @@ void* http_server_get_user_data(http_server_t* server);
 
 
 // Request functions
+http_server_t* http_request_get_server(http_request_t* request);
 uvhttp_string_slice_t http_request_method(http_request_t* request);
 uvhttp_string_slice_t http_request_target(http_request_t* request);
 uvhttp_string_slice_t http_request_header(http_request_t* request, const char* name);
@@ -77,6 +78,10 @@ void http_response_body(http_response_t* response, const char* body, size_t leng
 int http_respond(http_request_t* request, http_response_t* response);
 void http_response_destroy(http_response_t* response);
 int http_respond_simple(http_request_t* req, int status, const char* content_type, const char* body, size_t body_length);
+int http_respond_chunked_start(http_request_t* req, http_response_t* res);
+int http_respond_chunk(http_request_t* req, const char* data, size_t length);
+int http_respond_chunked_end(http_request_t* req);
+
 
 #ifdef __cplusplus
 }
@@ -170,6 +175,7 @@ static int handle_tls_handshake(http_connection_t* conn);
 
 // --- Function Implementations ---
 
+http_server_t* http_request_get_server(http_request_t* request) { return request->connection->server; }
 uvhttp_string_slice_t http_request_method(http_request_t* request) { return request->connection->method; }
 uvhttp_string_slice_t http_request_target(http_request_t* request) { return request->connection->url; }
 void* http_request_get_user_data(http_request_t* request) { return request->connection->user_data; }
@@ -345,6 +351,74 @@ int http_respond_simple(http_request_t* req, int status, const char* content_typ
     http_response_destroy(res);
     return r;
 }
+
+int http_respond_chunked_start(http_request_t* req, http_response_t* res) {
+    http_connection_t* conn = req->connection;
+    http_response_header(res, "Transfer-Encoding", "chunked");
+    
+    // For TLS, we still need to buffer everything to pass it to SSL_write
+    if (conn->server->config.tls_enabled) {
+        // This part is complex and requires careful buffering.
+        // For now, we'll just buffer the headers and send them.
+        // A full implementation would require a more complex state machine.
+        return -1; // Not implemented for TLS yet
+    }
+
+    uv_buf_t bufs[MAX_HEADERS + 2];
+    int nbufs = 0;
+    char header_bufs[MAX_HEADERS][1024];
+    char status_line[128];
+    const char* crlf = "\r\n";
+
+    int status_len = snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d OK\r\n", res->status_code);
+    bufs[nbufs++] = uv_buf_init(status_line, status_len);
+
+    for (int i = 0; i < res->header_count; i++) {
+        int len = snprintf(header_bufs[i], sizeof(header_bufs[i]), "%s: %s\r\n", res->headers[i][0], res->headers[i][1]);
+        bufs[nbufs++] = uv_buf_init(header_bufs[i], len);
+    }
+    bufs[nbufs++] = uv_buf_init((char*)crlf, 2);
+
+    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
+    write_req->buffer = NULL;
+    uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, bufs, nbufs, on_transient_write_cb);
+    return 0;
+}
+
+int http_respond_chunk(http_request_t* req, const char* data, size_t length) {
+    if (length == 0) return 0;
+    http_connection_t* conn = req->connection;
+
+    if (conn->server->config.tls_enabled) {
+        return -1; // Not implemented for TLS yet
+    }
+
+    char size_hex[16];
+    int size_len = snprintf(size_hex, sizeof(size_hex), "%zx\r\n", length);
+
+    uv_buf_t bufs[3];
+    bufs[0] = uv_buf_init(size_hex, size_len);
+    bufs[1] = uv_buf_init((char*)data, length);
+    bufs[2] = uv_buf_init("\r\n", 2);
+
+    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
+    write_req->buffer = NULL;
+    uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, bufs, 3, on_transient_write_cb);
+    return 0;
+}
+
+int http_respond_chunked_end(http_request_t* req) {
+    http_connection_t* conn = req->connection;
+    if (conn->server->config.tls_enabled) {
+        return -1; // Not implemented for TLS yet
+    }
+    uv_buf_t buf = uv_buf_init("0\r\n\r\n", 5);
+    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
+    write_req->buffer = NULL;
+    uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, &buf, 1, on_final_write_cb);
+    return 0;
+}
+
 
 http_server_t* http_server_create(uv_loop_t* loop, const http_server_config_t* config) {
     http_server_t* server = (http_server_t*)calloc(1, sizeof(http_server_t));
