@@ -1,5 +1,6 @@
 #include "acutest.h"
 #include "../uvhttp.h"
+#include "../llhttp.h"
 #include <uv.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -17,6 +18,7 @@ typedef struct {
     int connect_success;
     int server_close_called;
     int client_close_called;
+    int error_cb_called;
     
     // Buffers
     char response_buffer[TEST_BUFFER_SIZE];
@@ -166,6 +168,12 @@ static void on_complete_chunked_check(http_request_t* req) {
     http_respond_chunked_end(req);
 }
 
+static void on_error_check(http_request_t* req, int err, const char* msg) {
+    test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
+    ctx->error_cb_called = 1;
+    TEST_CHECK(err == HPE_INVALID_METHOD);
+}
+
 // --- Test Cases ---
 void test_header_parsing(void) {
     http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check };
@@ -197,6 +205,12 @@ void test_chunked_response(void) {
     run_test(&config, req, NULL);
 }
 
+void test_parse_error(void) {
+    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_error = on_error_check };
+    const char* req = "INVALID METHOD / HTTP/1.1\r\n\r\n";
+    run_test(&config, req, NULL);
+}
+
 void test_header_parsing_tls(void) {
     http_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
     const char* req = "GET / HTTP/1.1\r\n"
@@ -220,6 +234,7 @@ TEST_LIST = {
     { "server/post_request", test_post_request },
     { "server/body_too_large", test_body_too_large },
     { "server/chunked_response", test_chunked_response },
+    { "server/parse_error", test_parse_error },
     { "server/tls_header_parsing", test_header_parsing_tls },
     { NULL, NULL }
 };

@@ -24,6 +24,7 @@ typedef struct {
 // Callback types
 typedef void (*http_request_handler_t)(struct http_request_s* request);
 typedef void (*http_body_chunk_handler_t)(struct http_request_s* request, const uvhttp_string_slice_t* chunk);
+typedef void (*http_error_handler_t)(struct http_request_s* request, int error_code, const char* message);
 
 // HTTP server structure (opaque)
 typedef struct http_server_s http_server_t;
@@ -41,6 +42,7 @@ typedef struct http_server_config_s {
     http_request_handler_t on_headers; // Called after headers are parsed
     http_body_chunk_handler_t on_body_chunk; // Called for each body data chunk
     http_request_handler_t on_complete; // Called after the message is fully received
+    http_error_handler_t on_error; // Called on parse error
     int tls_enabled;
     const char* cert_file;
     const char* key_file;
@@ -547,7 +549,12 @@ static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     return;
 
 error:
-    fprintf(stderr, "Parse error: %s %s\n", llhttp_errno_name(llhttp_get_errno(&conn->parser)), conn->parser.reason);
+    if (conn->server->config.on_error) {
+        http_request_t request = { .connection = conn };
+        conn->server->config.on_error(&request, llhttp_get_errno(&conn->parser), conn->parser.reason);
+    } else {
+        fprintf(stderr, "Parse error: %s %s\n", llhttp_errno_name(llhttp_get_errno(&conn->parser)), conn->parser.reason);
+    }
     uv_close((uv_handle_t*)stream, on_close);
 }
 
