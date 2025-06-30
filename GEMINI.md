@@ -27,11 +27,13 @@ gcc your_app.c -I/path/to/libuv/include -I/path/to/openssl/include -L/path/to/li
 ### 1. サーバーの設定と作成
 
 `http_server_config_t` 構造体を初期化し、`http_server_create` 関数でサーバーインスタンスを作成します。
+`max_body_size` を設定することで、リクエストボディの最大サイズを制限できます（0は無制限）。
 
 ```c
 #include "uvhttp.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 // リクエストハンドラ
 void my_handler(http_request_t* req) {
@@ -54,7 +56,8 @@ int main() {
         .host = "0.0.0.0",
         .port = 8080,
         .handler = my_handler,
-        .tls_enabled = 0 // TLSを無効にする場合
+        .tls_enabled = 0, // TLSを無効にする場合
+        .max_body_size = 8 * 1024 * 1024 // 8MB
     };
 
     http_server_t* server = http_server_create(&config);
@@ -83,18 +86,39 @@ int main() {
 }
 ```
 
-### 4. リクエスト情報の取得
+### 4. リクエスト情報の取得 (ゼロコピーAPI)
 
-リクエストハンドラ内では、`http_request_*`系の関数を使って、メソッド、URL、ヘッダー、ボディなどの情報を取得できます。
+リクエストハンドラ内では、`http_request_*`系の関数を使って、メソッド、URL、ヘッダーなどの情報を**ゼロコピー**で取得できます。これらの関数は `uvhttp_string_slice_t` という構造体を返します。これは、受信バッファ内のデータを直接指すポインタ (`at`) とその長さ (`length`) を保持します。
+
+**重要:** スライスが指すデータは、リクエストハンドラのスコープ内でのみ有効です。
 
 ```c
 void my_handler(http_request_t* req) {
-    printf("Method: %s\n", http_request_method(req));
-    printf("Target: %s\n", http_request_target(req));
+    printf("Request received: ");
 
-    const char* user_agent = http_request_header(req, "User-Agent");
-    if (user_agent) {
-        printf("User-Agent: %s\n", user_agent);
+    // メソッドを取得して表示
+    uvhttp_string_slice_t method = http_request_method(req);
+    uvhttp_slice_print(&method);
+
+    printf(" ");
+
+    // ターゲット(URL)を取得して表示
+    uvhttp_string_slice_t target = http_request_target(req);
+    uvhttp_slice_print(&target);
+
+    printf("\n");
+
+    // "User-Agent"ヘッダーを取得
+    uvhttp_string_slice_t user_agent = http_request_header(req, "User-Agent");
+    if (user_agent.at != NULL) {
+        printf("User-Agent: ");
+        uvhttp_slice_print(&user_agent);
+        printf("\n");
+    }
+
+    // スライスをC文字列と比較
+    if (uvhttp_slice_cmp(&method, "POST") == 0) {
+        // POSTリクエストの処理...
     }
 
     // ...
@@ -112,13 +136,16 @@ TLSを有効にするには、`http_server_config_t` で `tls_enabled` を `1` �
         .handler = my_handler,
         .tls_enabled = 1,
         .cert_file = "path/to/your/cert.pem",
-        .key_file = "path/to/your/key.pem"
+        .key_file = "path/to/your/key.pem",
+        .max_body_size = 8 * 1024 * 1024
     };
 ```
 
 ## llhttp由来のコードについて
 
 `api.c`, `http.c`, `llhttp.c`, `llhttp.h` は、HTTPパーサーライブラリである `llhttp` から取り込まれたコードです。`libuvhttp` は内部で `llhttp` を利用してHTTPリクエストの解析を行っています。
+
+```
 
 ## コミットメッセージの規約
 
