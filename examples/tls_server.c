@@ -52,8 +52,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if (http_server_listen(server) != 0) {
+        fprintf(stderr, "Failed to listen on https://%s:%d\n", config.host, config.port);
+        return 1;
+    }
+
     printf("Server listening on https://%s:%d\n", config.host, config.port);
-    http_server_listen(server);
+
+    uv_run(http_server_loop(server), UV_RUN_DEFAULT);
 
     http_server_destroy(server);
     return 0;

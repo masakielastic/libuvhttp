@@ -363,7 +363,7 @@ int http_server_listen(http_server_t* server) {
         return 1;
     }
     server->tcp.data = server;
-    return uv_run(server->loop, UV_RUN_DEFAULT);
+    return 0;
 }
 
 void http_server_destroy(http_server_t* server) {
