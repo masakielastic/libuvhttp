@@ -228,51 +228,106 @@ void http_response_destroy(http_response_t* response) {
     free(response);
 }
 
+typedef struct {
+    uv_write_t req;
+    char* buffer; // Used for the combined TLS buffer
+} uvhttp_write_req_t;
+
+// ... (other code) ...
+
+static void on_final_write_cb(uv_write_t* req, int status) {
+    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)req;
+    if (write_req->buffer) {
+        free(write_req->buffer);
+    }
+    free(write_req);
+    uv_close((uv_handle_t*)req->handle, on_close);
+}
+
+static void on_transient_write_cb(uv_write_t* req, int status) {
+    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)req;
+    if (write_req->buffer) {
+        free(write_req->buffer);
+    }
+    free(write_req);
+}
+
+// ... (other code) ...
+
 int http_respond(http_request_t* request, http_response_t* response) {
     http_connection_t* conn = request->connection;
-    
-    char status_line[128];
-    snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d OK\r\n", response->status_code);
-
-    size_t headers_len = 0;
-    for (int i = 0; i < response->header_count; i++) {
-        headers_len += strlen(response->headers[i][0]) + 2 + strlen(response->headers[i][1]) + 2;
-    }
-
-    char content_len_header[64];
-    snprintf(content_len_header, sizeof(content_len_header), "Content-Length: %zu\r\n", response->body_length);
-
-    size_t total_len = strlen(status_line) + headers_len + strlen(content_len_header) + 2 + response->body_length;
-    char* response_buf = (char*)malloc(total_len + 1);
-    char* p = response_buf;
-
-    strcpy(p, status_line);
-    p += strlen(status_line);
-
-    for (int i = 0; i < response->header_count; i++) {
-        p += sprintf(p, "%s: %s\r\n", response->headers[i][0], response->headers[i][1]);
-    }
-
-    strcpy(p, content_len_header);
-    p += strlen(content_len_header);
-
-    strcpy(p, "\r\n");
-    p += 2;
-
-    if (response->body && response->body_length > 0) {
-        memcpy(p, response->body, response->body_length);
-    }
-    response_buf[total_len] = '\0';
 
     if (conn->server->config.tls_enabled) {
+        // For TLS, we still need to buffer everything to pass it to SSL_write
+        char status_line[128];
+        int status_len = snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d OK\r\n", response->status_code);
+
+        size_t headers_len = 0;
+        for (int i = 0; i < response->header_count; i++) {
+            headers_len += strlen(response->headers[i][0]) + 2 + strlen(response->headers[i][1]) + 2;
+        }
+
+        char content_len_header[64];
+        int content_len_header_len = snprintf(content_len_header, sizeof(content_len_header), "Content-Length: %zu\r\n", response->body_length);
+
+        size_t total_len = status_len + headers_len + content_len_header_len + 2 + response->body_length;
+        char* response_buf = (char*)malloc(total_len);
+        char* p = response_buf;
+
+        memcpy(p, status_line, status_len);
+        p += status_len;
+
+        for (int i = 0; i < response->header_count; i++) {
+            p += sprintf(p, "%s: %s\r\n", response->headers[i][0], response->headers[i][1]);
+        }
+
+        memcpy(p, content_len_header, content_len_header_len);
+        p += content_len_header_len;
+
+        memcpy(p, "\r\n", 2);
+        p += 2;
+
+        if (response->body && response->body_length > 0) {
+            memcpy(p, response->body, response->body_length);
+        }
+
         SSL_write(conn->ssl, response_buf, total_len);
         flush_write_bio(conn, on_final_write_cb);
         free(response_buf);
     } else {
-        uv_write_t* req = (uv_write_t*)malloc(sizeof(uv_write_t));
-        uv_buf_t buf = uv_buf_init(response_buf, total_len);
-        req->data = response_buf;
-        uv_write(req, (uv_stream_t*)&conn->tcp, &buf, 1, on_final_write_cb);
+        // For plain HTTP, use scatter-gather I/O
+        uv_buf_t bufs[MAX_HEADERS + 3]; // Status, Headers, CRLF, Body
+        int nbufs = 0;
+        char header_bufs[MAX_HEADERS][1024]; // Temporary storage for formatted headers
+        char status_line[128];
+        char content_len_header[64];
+        const char* crlf = "\r\n";
+
+        // 1. Status Line
+        int status_len = snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d OK\r\n", response->status_code);
+        bufs[nbufs++] = uv_buf_init(status_line, status_len);
+
+        // 2. Headers
+        for (int i = 0; i < response->header_count; i++) {
+            int len = snprintf(header_bufs[i], sizeof(header_bufs[i]), "%s: %s\r\n", response->headers[i][0], response->headers[i][1]);
+            bufs[nbufs++] = uv_buf_init(header_bufs[i], len);
+        }
+
+        // 3. Content-Length
+        int content_len_len = snprintf(content_len_header, sizeof(content_len_header), "Content-Length: %zu\r\n", response->body_length);
+        bufs[nbufs++] = uv_buf_init(content_len_header, content_len_len);
+
+        // 4. Final CRLF
+        bufs[nbufs++] = uv_buf_init((char*)crlf, 2);
+
+        // 5. Body
+        if (response->body && response->body_length > 0) {
+            bufs[nbufs++] = uv_buf_init(response->body, response->body_length);
+        }
+
+        uvhttp_write_req_t* req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
+        req->buffer = NULL; // Nothing to free for scatter-gather
+        uv_write((uv_write_t*)req, (uv_stream_t*)&conn->tcp, bufs, nbufs, on_final_write_cb);
     }
 
     return 0;
