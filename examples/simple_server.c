@@ -1,6 +1,7 @@
 #include "uvhttp.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 // Request handler
 void my_handler(http_request_t* req) {
@@ -20,10 +21,15 @@ void my_handler(http_request_t* req) {
     http_response_destroy(res);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    int port = 8080;
+    if (argc > 1) {
+        port = atoi(argv[1]);
+    }
+
     http_server_config_t config = {
         .host = "0.0.0.0",
-        .port = 8080,
+        .port = port,
         .handler = my_handler,
         .tls_enabled = 0 // TLS is disabled
     };

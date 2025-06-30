@@ -10,7 +10,7 @@ TARGET = simple_server
 # Source file for the example
 SRC = examples/simple_server.c uvhttp.c llhttp.c api.c http.c
 
-.PHONY: all clean run
+.PHONY: all clean run help
 
 all: $(TARGET)
 
@@ -20,8 +20,18 @@ $(TARGET): $(SRC) uvhttp.h
 
 # Run the server
 run: all
-	./$(TARGET)
+	./$(TARGET) $(ARGS)
 
 # Clean up build artifacts
 clean:
 	rm -f $(TARGET)
+
+# Show help
+help:
+	@echo "Usage: make [target]"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all       Build the server executable (default)"
+	@echo "  run       Run the server. Use ARGS to pass arguments (e.g., make run ARGS=8888)"
+	@echo "  clean     Remove build artifacts"
+	@echo "  help      Show this help message"
