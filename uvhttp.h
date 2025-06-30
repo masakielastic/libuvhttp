@@ -358,32 +358,31 @@ int http_respond_chunked_start(http_request_t* req, http_response_t* res) {
     http_connection_t* conn = req->connection;
     http_response_header(res, "Transfer-Encoding", "chunked");
     
-    // For TLS, we still need to buffer everything to pass it to SSL_write
-    if (conn->server->config.tls_enabled) {
-        // This part is complex and requires careful buffering.
-        // For now, we'll just buffer the headers and send them.
-        // A full implementation would require a more complex state machine.
-        return -1; // Not implemented for TLS yet
-    }
+    char status_line[128];
+    int status_len = snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d OK\r\n", res->status_code);
 
+    char header_bufs[MAX_HEADERS][1024];
     uv_buf_t bufs[MAX_HEADERS + 2];
     int nbufs = 0;
-    char header_bufs[MAX_HEADERS][1024];
-    char status_line[128];
-    const char* crlf = "\r\n";
 
-    int status_len = snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d OK\r\n", res->status_code);
     bufs[nbufs++] = uv_buf_init(status_line, status_len);
 
     for (int i = 0; i < res->header_count; i++) {
         int len = snprintf(header_bufs[i], sizeof(header_bufs[i]), "%s: %s\r\n", res->headers[i][0], res->headers[i][1]);
         bufs[nbufs++] = uv_buf_init(header_bufs[i], len);
     }
-    bufs[nbufs++] = uv_buf_init((char*)crlf, 2);
+    bufs[nbufs++] = uv_buf_init("\r\n", 2);
 
-    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
-    write_req->buffer = NULL;
-    uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, bufs, nbufs, on_transient_write_cb);
+    if (conn->server->config.tls_enabled) {
+        for (int i = 0; i < nbufs; i++) {
+            SSL_write(conn->ssl, bufs[i].base, bufs[i].len);
+        }
+        flush_write_bio(conn, on_transient_write_cb);
+    } else {
+        uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
+        write_req->buffer = NULL;
+        uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, bufs, nbufs, on_transient_write_cb);
+    }
     return 0;
 }
 
@@ -391,33 +390,38 @@ int http_respond_chunk(http_request_t* req, const char* data, size_t length) {
     if (length == 0) return 0;
     http_connection_t* conn = req->connection;
 
-    if (conn->server->config.tls_enabled) {
-        return -1; // Not implemented for TLS yet
-    }
-
     char size_hex[16];
     int size_len = snprintf(size_hex, sizeof(size_hex), "%zx\r\n", length);
 
-    uv_buf_t bufs[3];
-    bufs[0] = uv_buf_init(size_hex, size_len);
-    bufs[1] = uv_buf_init((char*)data, length);
-    bufs[2] = uv_buf_init("\r\n", 2);
+    if (conn->server->config.tls_enabled) {
+        SSL_write(conn->ssl, size_hex, size_len);
+        SSL_write(conn->ssl, data, length);
+        SSL_write(conn->ssl, "\r\n", 2);
+        flush_write_bio(conn, on_transient_write_cb);
+    } else {
+        uv_buf_t bufs[3];
+        bufs[0] = uv_buf_init(size_hex, size_len);
+        bufs[1] = uv_buf_init((char*)data, length);
+        bufs[2] = uv_buf_init("\r\n", 2);
 
-    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
-    write_req->buffer = NULL;
-    uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, bufs, 3, on_transient_write_cb);
+        uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
+        write_req->buffer = NULL;
+        uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, bufs, 3, on_transient_write_cb);
+    }
     return 0;
 }
 
 int http_respond_chunked_end(http_request_t* req) {
     http_connection_t* conn = req->connection;
     if (conn->server->config.tls_enabled) {
-        return -1; // Not implemented for TLS yet
+        SSL_write(conn->ssl, "0\r\n\r\n", 5);
+        flush_write_bio(conn, on_final_write_cb);
+    } else {
+        uv_buf_t buf = uv_buf_init("0\r\n\r\n", 5);
+        uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
+        write_req->buffer = NULL;
+        uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, &buf, 1, on_final_write_cb);
     }
-    uv_buf_t buf = uv_buf_init("0\r\n\r\n", 5);
-    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
-    write_req->buffer = NULL;
-    uv_write((uv_write_t*)write_req, (uv_stream_t*)&conn->tcp, &buf, 1, on_final_write_cb);
     return 0;
 }
 

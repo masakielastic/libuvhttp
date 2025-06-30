@@ -317,6 +317,12 @@ void test_header_parsing_tls(void) {
     run_test(&config, req, NULL);
 }
 
+void test_chunked_response_tls(void) {
+    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_complete = on_complete_chunked_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
+    const char* req = "GET / HTTP/1.1\r\n\r\n";
+    run_test(&config, req, NULL);
+}
+
 void test_slice_cmp(void) {
     uvhttp_string_slice_t slice = {"hello", 5};
     TEST_CHECK(uvhttp_slice_cmp(&slice, "hello") == 0);
@@ -334,5 +340,6 @@ TEST_LIST = {
     { "server/chunked_response", test_chunked_response },
     { "server/parse_error", test_parse_error },
     { "server/tls_header_parsing", test_header_parsing_tls },
+    { "server/tls_chunked_response", test_chunked_response_tls },
     { NULL, NULL }
 };
