@@ -40,8 +40,9 @@ int main(int argc, char *argv[]) {
     // --- Custom OpenSSL Configuration ---
     SSL_CTX* ssl_ctx = uvhttp_server_get_ssl_ctx(server);
     
-    // Example: Disable TLS 1.0 and 1.1
-    SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+    // Set the minimum supported TLS version to 1.2 (recommended)
+    // This is the modern way to disable older, insecure protocols.
+    SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_2_VERSION);
 
     // Load certificate and key
     if (SSL_CTX_use_certificate_file(ssl_ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0 ||
