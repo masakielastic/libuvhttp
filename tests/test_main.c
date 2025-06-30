@@ -37,6 +37,7 @@ typedef struct {
     BIO* read_bio;
     BIO* write_bio;
     int tls_handshake_complete;
+    int tls_enabled;
 } test_context_t;
 
 static void on_server_close(uv_handle_t* handle) {
