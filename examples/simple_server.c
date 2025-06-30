@@ -45,11 +45,11 @@ void on_signal(uv_signal_t* handle, int signum) {
 
 void on_request_complete(http_request_t* req) {
     printf("Request received: ");
-    uvhttp_string_slice_t method = http_request_method(req);
-    uvhttp_slice_print(&method);
+    uvhttp_str_t method = http_request_method(req);
+    uvhttp_str_print(&method);
     printf(" ");
-    uvhttp_string_slice_t target = http_request_target(req);
-    uvhttp_slice_print(&target);
+    uvhttp_str_t target = http_request_target(req);
+    uvhttp_str_print(&target);
     printf("\n");
 
     const char* body = "Hello, World!";

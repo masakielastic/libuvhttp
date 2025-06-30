@@ -19,11 +19,11 @@ struct http_server_config_s;
 typedef struct {
     const char* at;
     size_t length;
-} uvhttp_string_slice_t;
+} uvhttp_str_t;
 
 // Callback types
 typedef void (*http_request_handler_t)(struct http_request_s* request);
-typedef void (*http_body_chunk_handler_t)(struct http_request_s* request, const uvhttp_string_slice_t* chunk);
+typedef void (*http_body_chunk_handler_t)(struct http_request_s* request, const uvhttp_str_t* chunk);
 typedef void (*http_error_handler_t)(struct http_request_s* request, int error_code, const char* message);
 
 // HTTP server structure (opaque)
@@ -61,15 +61,15 @@ void* http_server_get_user_data(http_server_t* server);
 
 // Request functions
 http_server_t* http_request_get_server(http_request_t* request);
-uvhttp_string_slice_t http_request_method(http_request_t* request);
-uvhttp_string_slice_t http_request_target(http_request_t* request);
-uvhttp_string_slice_t http_request_header(http_request_t* request, const char* name);
+uvhttp_str_t http_request_method(http_request_t* request);
+uvhttp_str_t http_request_target(http_request_t* request);
+uvhttp_str_t http_request_header(http_request_t* request, const char* name);
 void* http_request_get_user_data(http_request_t* request);
 void http_request_set_user_data(http_request_t* request, void* user_data);
 
 // String slice helpers
-int uvhttp_slice_cmp(const uvhttp_string_slice_t* slice, const char* str);
-void uvhttp_slice_print(const uvhttp_string_slice_t* slice);
+int uvhttp_str_cmp(const uvhttp_str_t* slice, const char* str);
+void uvhttp_str_print(const uvhttp_str_t* slice);
 
 
 // Response functions
@@ -129,11 +129,11 @@ typedef struct {
     
     char read_buffer[READ_BUFFER_SIZE]; // Per-connection read buffer
 
-    uvhttp_string_slice_t method;
-    uvhttp_string_slice_t url;
-    uvhttp_string_slice_t headers[MAX_HEADERS][2];
+    uvhttp_str_t method;
+    uvhttp_str_t url;
+    uvhttp_str_t headers[MAX_HEADERS][2];
     int header_count;
-    uvhttp_string_slice_t current_header_field;
+    uvhttp_str_t current_header_field;
 
     void* user_data;
 } http_connection_t;
@@ -178,22 +178,22 @@ static int handle_tls_handshake(http_connection_t* conn);
 // --- Function Implementations ---
 
 http_server_t* http_request_get_server(http_request_t* request) { return request->connection->server; }
-uvhttp_string_slice_t http_request_method(http_request_t* request) { return request->connection->method; }
-uvhttp_string_slice_t http_request_target(http_request_t* request) { return request->connection->url; }
+uvhttp_str_t http_request_method(http_request_t* request) { return request->connection->method; }
+uvhttp_str_t http_request_target(http_request_t* request) { return request->connection->url; }
 void* http_request_get_user_data(http_request_t* request) { return request->connection->user_data; }
 void http_request_set_user_data(http_request_t* request, void* user_data) { request->connection->user_data = user_data; }
 
-uvhttp_string_slice_t http_request_header(http_request_t* request, const char* name) {
+uvhttp_str_t http_request_header(http_request_t* request, const char* name) {
     for (int i = 0; i < request->connection->header_count; i++) {
-        if (uvhttp_slice_cmp(&request->connection->headers[i][0], name) == 0) {
+        if (uvhttp_str_cmp(&request->connection->headers[i][0], name) == 0) {
             return request->connection->headers[i][1];
         }
     }
-    uvhttp_string_slice_t empty = { NULL, 0 };
+    uvhttp_str_t empty = { NULL, 0 };
     return empty;
 }
 
-int uvhttp_slice_cmp(const uvhttp_string_slice_t* slice, const char* str) {
+int uvhttp_str_cmp(const uvhttp_str_t* slice, const char* str) {
     if (slice == NULL || slice->at == NULL || str == NULL) {
         return -1;
     }
@@ -204,7 +204,7 @@ int uvhttp_slice_cmp(const uvhttp_string_slice_t* slice, const char* str) {
     return strncasecmp(slice->at, str, str_len);
 }
 
-void uvhttp_slice_print(const uvhttp_string_slice_t* slice) {
+void uvhttp_str_print(const uvhttp_str_t* slice) {
     if (slice && slice->at) {
         fwrite(slice->at, 1, slice->length, stdout);
     }
@@ -653,7 +653,7 @@ static int on_body(llhttp_t* parser, const char* at, size_t length) {
     http_connection_t* conn = (http_connection_t*)parser->data;
     if (conn->server->config.on_body_chunk) {
         http_request_t request = { .connection = conn };
-        uvhttp_string_slice_t chunk = { .at = at, .length = length };
+        uvhttp_str_t chunk = { .at = at, .length = length };
         conn->server->config.on_body_chunk(&request, &chunk);
     }
     return 0;

@@ -224,7 +224,7 @@ static void run_test(http_server_config_t* config, const char* req_str, void (*t
 }
 
 // --- Test Handlers ---
-static void on_body_chunk_test(http_request_t* req, const uvhttp_string_slice_t* chunk) {
+static void on_body_chunk_test(http_request_t* req, const uvhttp_str_t* chunk) {
     test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
     if (chunk->length > 0) {
         memcpy(ctx->received_body + ctx->received_body_len, chunk->at, chunk->length);
@@ -241,10 +241,10 @@ static void on_headers_check(http_request_t* req) {
 }
 
 static void on_complete_header_check(http_request_t* req) {
-    uvhttp_string_slice_t h1 = http_request_header(req, "X-Test-Header-1");
-    uvhttp_string_slice_t h2 = http_request_header(req, "X-Test-Header-2");
-    TEST_CHECK(uvhttp_slice_cmp(&h1, "Value1") == 0);
-    TEST_CHECK(uvhttp_slice_cmp(&h2, "Value2") == 0);
+    uvhttp_str_t h1 = http_request_header(req, "X-Test-Header-1");
+    uvhttp_str_t h2 = http_request_header(req, "X-Test-Header-2");
+    TEST_CHECK(uvhttp_str_cmp(&h1, "Value1") == 0);
+    TEST_CHECK(uvhttp_str_cmp(&h2, "Value2") == 0);
     on_complete_ok(req);
 }
 
@@ -324,12 +324,12 @@ void test_chunked_response_tls(void) {
 }
 
 void test_slice_cmp(void) {
-    uvhttp_string_slice_t slice = {"hello", 5};
-    TEST_CHECK(uvhttp_slice_cmp(&slice, "hello") == 0);
-    TEST_CHECK(uvhttp_slice_cmp(&slice, "world") != 0);
-    TEST_CHECK(uvhttp_slice_cmp(&slice, "HELLO") == 0);
-    TEST_CHECK(uvhttp_slice_cmp(&slice, "hell") != 0);
-    TEST_CHECK(uvhttp_slice_cmp(&slice, "helloo") != 0);
+    uvhttp_str_t slice = {"hello", 5};
+    TEST_CHECK(uvhttp_str_cmp(&slice, "hello") == 0);
+    TEST_CHECK(uvhttp_str_cmp(&slice, "world") != 0);
+    TEST_CHECK(uvhttp_str_cmp(&slice, "HELLO") == 0);
+    TEST_CHECK(uvhttp_str_cmp(&slice, "hell") != 0);
+    TEST_CHECK(uvhttp_str_cmp(&slice, "helloo") != 0);
 }
 
 TEST_LIST = {
