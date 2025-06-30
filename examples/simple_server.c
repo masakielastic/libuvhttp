@@ -33,6 +33,8 @@ int main(int argc, char *argv[]) {
         port = atoi(argv[1]);
     }
 
+    uv_loop_t* loop = uv_default_loop();
+
     http_server_config_t config = {
         .host = "0.0.0.0",
         .port = port,
@@ -41,7 +43,7 @@ int main(int argc, char *argv[]) {
         .max_body_size = 8 * 1024 * 1024 // 8MB
     };
 
-    http_server_t* server = http_server_create(&config);
+    http_server_t* server = http_server_create(loop, &config);
     if (!server) {
         fprintf(stderr, "Failed to create server.\n");
         return 1;
@@ -54,7 +56,7 @@ int main(int argc, char *argv[]) {
 
     printf("Server listening on http://%s:%d\n", config.host, config.port);
     
-    uv_run(http_server_loop(server), UV_RUN_DEFAULT);
+    uv_run(loop, UV_RUN_DEFAULT);
 
     http_server_destroy(server);
     return 0;

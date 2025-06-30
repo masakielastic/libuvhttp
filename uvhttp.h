@@ -45,8 +45,9 @@ typedef struct http_server_config_s {
 } http_server_config_t;
 
 // Server management functions
-http_server_t* http_server_create(const http_server_config_t* config);
+http_server_t* http_server_create(uv_loop_t* loop, const http_server_config_t* config);
 int http_server_listen(http_server_t* server);
+void http_server_close(http_server_t* server, uv_close_cb on_close);
 void http_server_destroy(http_server_t* server);
 uv_loop_t* http_server_loop(http_server_t* server);
 
@@ -333,9 +334,9 @@ int http_respond(http_request_t* request, http_response_t* response) {
     return 0;
 }
 
-http_server_t* http_server_create(const http_server_config_t* config) {
+http_server_t* http_server_create(uv_loop_t* loop, const http_server_config_t* config) {
     http_server_t* server = (http_server_t*)calloc(1, sizeof(http_server_t));
-    server->loop = uv_default_loop();
+    server->loop = loop;
     memcpy(&server->config, config, sizeof(http_server_config_t));
     
     if (server->config.tls_enabled) {
@@ -364,6 +365,10 @@ int http_server_listen(http_server_t* server) {
     }
     server->tcp.data = server;
     return 0;
+}
+
+void http_server_close(http_server_t* server, uv_close_cb on_server_close) {
+    uv_close((uv_handle_t*)&server->tcp, on_server_close);
 }
 
 void http_server_destroy(http_server_t* server) {

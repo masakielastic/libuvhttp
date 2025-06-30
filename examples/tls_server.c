@@ -33,6 +33,8 @@ int main(int argc, char *argv[]) {
         port = atoi(argv[1]);
     }
 
+    uv_loop_t* loop = uv_default_loop();
+
     // NOTE: You must provide your own cert.pem and key.pem files.
     // For testing, you can generate a self-signed certificate:
     // openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365
@@ -46,7 +48,7 @@ int main(int argc, char *argv[]) {
         .max_body_size = 8 * 1024 * 1024 // 8MB
     };
 
-    http_server_t* server = http_server_create(&config);
+    http_server_t* server = http_server_create(loop, &config);
     if (!server) {
         fprintf(stderr, "Failed to create server. Check if cert.pem and key.pem exist.\n");
         return 1;
@@ -59,7 +61,7 @@ int main(int argc, char *argv[]) {
 
     printf("Server listening on https://%s:%d\n", config.host, config.port);
 
-    uv_run(http_server_loop(server), UV_RUN_DEFAULT);
+    uv_run(loop, UV_RUN_DEFAULT);
 
     http_server_destroy(server);
     return 0;
