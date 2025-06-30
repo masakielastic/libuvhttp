@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <openssl/ssl.h>
 
 void on_request_complete(uvhttp_request_t* req) {
     printf("Request received: ");
@@ -24,24 +25,32 @@ int main(int argc, char *argv[]) {
 
     uv_loop_t* loop = uv_default_loop();
 
-    // NOTE: You must provide your own cert.pem and key.pem files.
-    // For testing, you can generate a self-signed certificate:
-    // openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365
     uvhttp_server_config_t config = {
         .host = "0.0.0.0",
         .port = port,
         .on_complete = on_request_complete,
-        .tls_enabled = 1, // Enable TLS
-        .cert_file = "cert.pem",
-        .key_file = "key.pem",
-        .max_body_size = 8 * 1024 * 1024 // 8MB
     };
 
     uvhttp_server_t* server = uvhttp_server_create(loop, &config);
     if (!server) {
-        fprintf(stderr, "Failed to create server. Check if cert.pem and key.pem exist.\n");
+        fprintf(stderr, "Failed to create server.\n");
         return 1;
     }
+
+    // --- Custom OpenSSL Configuration ---
+    SSL_CTX* ssl_ctx = uvhttp_server_get_ssl_ctx(server);
+    
+    // Example: Disable TLS 1.0 and 1.1
+    SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+
+    // Load certificate and key
+    if (SSL_CTX_use_certificate_file(ssl_ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0 ||
+        SSL_CTX_use_PrivateKey_file(ssl_ctx, "key.pem", SSL_FILETYPE_PEM) <= 0) {
+        fprintf(stderr, "Failed to load TLS certificate/key\n");
+        uvhttp_server_destroy(server);
+        return 1;
+    }
+    // --- End of Custom OpenSSL Configuration ---
 
     if (uvhttp_server_listen(server) != 0) {
         fprintf(stderr, "Failed to listen on https://%s:%d\n", config.host, config.port);

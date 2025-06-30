@@ -8,6 +8,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 #include <uv.h>
+#include <openssl/ssl.h>
 
 // Forward declarations
 struct uvhttp_server_s;
@@ -43,9 +44,6 @@ typedef struct uvhttp_server_config_s {
     uvhttp_body_chunk_handler_t on_body_chunk; // Called for each body data chunk
     uvhttp_request_handler_t on_complete; // Called after the message is fully received
     uvhttp_error_handler_t on_error; // Called on parse error
-    int tls_enabled;
-    const char* cert_file;
-    const char* key_file;
     size_t max_body_size; // Max allowed body size, 0 for unlimited
 } uvhttp_server_config_t;
 
@@ -57,6 +55,7 @@ void uvhttp_server_destroy(uvhttp_server_t* server);
 uv_loop_t* uvhttp_server_loop(uvhttp_server_t* server);
 void uvhttp_server_set_user_data(uvhttp_server_t* server, void* user_data);
 void* uvhttp_server_get_user_data(uvhttp_server_t* server);
+SSL_CTX* uvhttp_server_get_ssl_ctx(uvhttp_server_t* server);
 
 
 // Request functions
@@ -267,7 +266,7 @@ static void on_transient_write_cb(uv_write_t* req, int status) {
 int uvhttp_respond(uvhttp_request_t* request, uvhttp_response_t* response) {
     uvhttp_connection_t* conn = request->connection;
 
-    if (conn->server->config.tls_enabled) {
+    if (conn->server->ssl_ctx) {
         // For TLS, we still need to buffer everything to pass it to SSL_write
         char status_line[128];
         int status_len = snprintf(status_line, sizeof(status_line), "HTTP/1.1 %d OK\r\n", response->status_code);
@@ -376,7 +375,7 @@ int uvhttp_respond_chunked_start(uvhttp_request_t* req, uvhttp_response_t* res) 
     }
     bufs[nbufs++] = uv_buf_init("\r\n", 2);
 
-    if (conn->server->config.tls_enabled) {
+    if (conn->server->ssl_ctx) {
         for (int i = 0; i < nbufs; i++) {
             SSL_write(conn->ssl, bufs[i].base, bufs[i].len);
         }
@@ -396,7 +395,7 @@ int uvhttp_respond_chunk(uvhttp_request_t* req, const char* data, size_t length)
     char size_hex[16];
     int size_len = snprintf(size_hex, sizeof(size_hex), "%zx\r\n", length);
 
-    if (conn->server->config.tls_enabled) {
+    if (conn->server->ssl_ctx) {
         SSL_write(conn->ssl, size_hex, size_len);
         SSL_write(conn->ssl, data, length);
         SSL_write(conn->ssl, "\r\n", 2);
@@ -416,7 +415,7 @@ int uvhttp_respond_chunk(uvhttp_request_t* req, const char* data, size_t length)
 
 int uvhttp_respond_chunked_end(uvhttp_request_t* req) {
     uvhttp_connection_t* conn = req->connection;
-    if (conn->server->config.tls_enabled) {
+    if (conn->server->ssl_ctx) {
         SSL_write(conn->ssl, "0\r\n\r\n", 5);
         flush_write_bio(conn, on_final_write_cb);
     } else {
@@ -429,22 +428,19 @@ int uvhttp_respond_chunked_end(uvhttp_request_t* req) {
 }
 
 
+SSL_CTX* uvhttp_server_get_ssl_ctx(uvhttp_server_t* server) {
+    if (!server->ssl_ctx) {
+        SSL_library_init();
+        SSL_load_error_strings();
+        server->ssl_ctx = SSL_CTX_new(TLS_server_method());
+    }
+    return server->ssl_ctx;
+}
+
 uvhttp_server_t* uvhttp_server_create(uv_loop_t* loop, const uvhttp_server_config_t* config) {
     uvhttp_server_t* server = (uvhttp_server_t*)calloc(1, sizeof(uvhttp_server_t));
     server->loop = loop;
     memcpy(&server->config, config, sizeof(uvhttp_server_config_t));
-    
-    if (server->config.tls_enabled) {
-        SSL_library_init();
-        SSL_load_error_strings();
-        server->ssl_ctx = SSL_CTX_new(TLS_server_method());
-        if (SSL_CTX_use_certificate_file(server->ssl_ctx, server->config.cert_file, SSL_FILETYPE_PEM) <= 0 ||
-            SSL_CTX_use_PrivateKey_file(server->ssl_ctx, server->config.key_file, SSL_FILETYPE_PEM) <= 0) {
-            fprintf(stderr, "Failed to load TLS certificate/key\n");
-            free(server);
-            return NULL;
-        }
-    }
     return server;
 }
 
@@ -490,7 +486,7 @@ static void on_new_connection(uv_stream_t* server_stream, int status) {
     conn->user_data = server->user_data;
 
     if (uv_accept(server_stream, (uv_stream_t*)&conn->tcp) == 0) {
-        if (server->config.tls_enabled) {
+        if (server->ssl_ctx) {
             conn->ssl = SSL_new(server->ssl_ctx);
             conn->read_bio = BIO_new(BIO_s_mem());
             conn->write_bio = BIO_new(BIO_s_mem());
@@ -530,7 +526,7 @@ static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     uvhttp_connection_t* conn = (uvhttp_connection_t*)stream->data;
     if (nread > 0) {
         llhttp_errno_t err;
-        if (conn->server->config.tls_enabled) {
+        if (conn->server->ssl_ctx) {
             BIO_write(conn->read_bio, buf->base, nread);
             if (!conn->handshake_complete) {
                 if (handle_tls_handshake(conn) < 0) {
@@ -551,7 +547,8 @@ static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
             err = llhttp_execute(&conn->parser, buf->base, nread);
             if (err != HPE_OK) goto error;
         }
-    } else if (nread < 0) {
+    }
+ else if (nread < 0) {
         uv_close((uv_handle_t*)stream, on_close);
     }
     return;

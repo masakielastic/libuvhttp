@@ -69,8 +69,6 @@ int main(int argc, char *argv[]) {
         .host = "0.0.0.0",
         .port = port,
         .on_complete = on_request_complete,
-        .tls_enabled = 0,
-        .max_body_size = 8 * 1024 * 1024
     };
 
     app_ctx.server = uvhttp_server_create(loop, &config);
