@@ -93,6 +93,7 @@ void http_response_destroy(http_response_t* response);
 #include <time.h>
 
 #define MAX_HEADERS 64
+#define READ_BUFFER_SIZE (64 * 1024)
 
 // Internal structures
 struct http_server_s {
@@ -112,6 +113,8 @@ typedef struct {
     int handshake_complete;
     http_server_t* server;
     
+    char read_buffer[READ_BUFFER_SIZE]; // Per-connection read buffer
+
     uvhttp_string_slice_t method;
     uvhttp_string_slice_t url;
     uvhttp_string_slice_t headers[MAX_HEADERS][2];
@@ -136,6 +139,12 @@ struct http_response_s {
     char* body;
     size_t body_length;
 };
+
+typedef struct {
+    uv_write_t req;
+    char* buffer; // Used for the combined TLS buffer
+} uvhttp_write_req_t;
+
 
 // Forward declarations for internal functions
 static void on_new_connection(uv_stream_t* server_stream, int status);
@@ -228,13 +237,6 @@ void http_response_destroy(http_response_t* response) {
     free(response);
 }
 
-typedef struct {
-    uv_write_t req;
-    char* buffer; // Used for the combined TLS buffer
-} uvhttp_write_req_t;
-
-// ... (other code) ...
-
 static void on_final_write_cb(uv_write_t* req, int status) {
     uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)req;
     if (write_req->buffer) {
@@ -251,8 +253,6 @@ static void on_transient_write_cb(uv_write_t* req, int status) {
     }
     free(write_req);
 }
-
-// ... (other code) ...
 
 int http_respond(http_request_t* request, http_response_t* response) {
     http_connection_t* conn = request->connection;
@@ -418,8 +418,9 @@ static void on_close(uv_handle_t* handle) {
 }
 
 static void on_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
-    buf->base = (char*)malloc(suggested_size);
-    buf->len = suggested_size;
+    http_connection_t* conn = (http_connection_t*)handle->data;
+    buf->base = conn->read_buffer;
+    buf->len = READ_BUFFER_SIZE;
 }
 
 static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
@@ -431,9 +432,9 @@ static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
             if (!conn->handshake_complete) {
                 if (handle_tls_handshake(conn) < 0) {
                     uv_close((uv_handle_t*)stream, on_close);
-                    goto cleanup;
+                    return;
                 }
-                if (!conn->handshake_complete) goto cleanup;
+                if (!conn->handshake_complete) return;
             }
             
             char read_buf[4096];
@@ -450,29 +451,28 @@ static void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     } else if (nread < 0) {
         uv_close((uv_handle_t*)stream, on_close);
     }
-    goto cleanup;
+    return;
 
 error:
     fprintf(stderr, "Parse error: %s %s\n", llhttp_errno_name(llhttp_get_errno(&conn->parser)), conn->parser.reason);
     uv_close((uv_handle_t*)stream, on_close);
-
-cleanup:
-    if (buf->base) free(buf->base);
 }
 
 static void on_final_write_cb(uv_write_t* req, int status) {
-    if (req->data) {
-        free(req->data);
+    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)req;
+    if (write_req->buffer) {
+        free(write_req->buffer);
     }
+    free(write_req);
     uv_close((uv_handle_t*)req->handle, on_close);
-    free(req);
 }
 
 static void on_transient_write_cb(uv_write_t* req, int status) {
-    if (req->data) {
-        free(req->data);
+    uvhttp_write_req_t* write_req = (uvhttp_write_req_t*)req;
+    if (write_req->buffer) {
+        free(write_req->buffer);
     }
-    free(req);
+    free(write_req);
 }
 
 static void flush_write_bio(http_connection_t* conn, uv_write_cb cb) {
@@ -481,10 +481,10 @@ static void flush_write_bio(http_connection_t* conn, uv_write_cb cb) {
         char* buf_data = (char*)malloc(pending);
         int bytes_read = BIO_read(conn->write_bio, buf_data, pending);
         if (bytes_read > 0) {
-            uv_write_t* req = (uv_write_t*)malloc(sizeof(uv_write_t));
+            uvhttp_write_req_t* req = (uvhttp_write_req_t*)malloc(sizeof(uvhttp_write_req_t));
+            req->buffer = buf_data;
             uv_buf_t buf = uv_buf_init(buf_data, bytes_read);
-            req->data = buf_data;
-            uv_write(req, (uv_stream_t*)&conn->tcp, &buf, 1, cb);
+            uv_write((uv_write_t*)req, (uv_stream_t*)&conn->tcp, &buf, 1, cb);
         } else {
             free(buf_data);
         }
