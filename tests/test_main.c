@@ -8,6 +8,8 @@
 
 #define TEST_PORT 8888
 #define TEST_TLS_PORT 8889
+#define TEST_CERT_FILE "tests/test_cert.pem"
+#define TEST_KEY_FILE "tests/test_key.pem"
 #define TEST_BUFFER_SIZE 1024
 
 typedef struct {
@@ -193,6 +195,14 @@ void test_chunked_response(void) {
     run_test(&config, req, NULL);
 }
 
+void test_header_parsing_tls(void) {
+    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_TLS_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check, .tls_enabled = 1, .cert_file = TEST_CERT_FILE, .key_file = TEST_KEY_FILE };
+    const char* req = "GET / HTTP/1.1\r\n"
+                      "X-Test-Header-1: Value1\r\n"
+                      "X-Test-Header-2: Value2\r\n\r\n";
+    run_test(&config, req, NULL);
+}
+
 void test_slice_cmp(void) {
     uvhttp_string_slice_t slice = {"hello", 5};
     TEST_CHECK(uvhttp_slice_cmp(&slice, "hello") == 0);
@@ -208,5 +218,6 @@ TEST_LIST = {
     { "server/post_request", test_post_request },
     { "server/body_too_large", test_body_too_large },
     { "server/chunked_response", test_chunked_response },
+    { "server/tls_header_parsing", test_header_parsing_tls },
     { NULL, NULL }
 };
