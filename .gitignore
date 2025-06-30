@@ -1,0 +1,4 @@
+# Build artifacts
+simple_server
+*.o
+*.out
