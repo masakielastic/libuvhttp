@@ -128,12 +128,15 @@ typedef struct {
     uvhttp_server_t* server;
     
     char read_buffer[READ_BUFFER_SIZE]; // Per-connection read buffer
+    char* header_storage;
+    size_t header_storage_size;
+    size_t header_storage_offset;
 
     uvhttp_str_t method;
     uvhttp_str_t url;
     uvhttp_str_t headers[MAX_HEADERS][2];
     int header_count;
-    uvhttp_str_t current_header_field;
+    int last_header_was_value; // Used to detect multiline headers
 
     void* user_data;
 } uvhttp_connection_t;
@@ -513,6 +516,7 @@ static void on_new_connection(uv_stream_t* server_stream, int status) {
 static void on_close(uv_handle_t* handle) {
     uvhttp_connection_t* conn = (uvhttp_connection_t*)handle->data;
     if (conn->ssl) SSL_free(conn->ssl);
+    if (conn->header_storage) free(conn->header_storage);
     free(conn);
 }
 
@@ -595,6 +599,8 @@ static int handle_tls_handshake(uvhttp_connection_t* conn) {
 static int on_message_begin(llhttp_t* parser) {
     uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
     conn->header_count = 0;
+    conn->header_storage_offset = 0;
+    conn->last_header_was_value = 1;
     return 0;
 }
 
@@ -605,29 +611,59 @@ static int on_url(llhttp_t* parser, const char* at, size_t length) {
     return 0;
 }
 
+static char* allocate_in_header_storage(uvhttp_connection_t* conn, size_t size) {
+    if (conn->header_storage == NULL) {
+        conn->header_storage_size = 4096; // Initial size
+        conn->header_storage = (char*)malloc(conn->header_storage_size);
+    }
+    if (conn->header_storage_offset + size > conn->header_storage_size) {
+        conn->header_storage_size = (conn->header_storage_offset + size) * 2;
+        conn->header_storage = (char*)realloc(conn->header_storage, conn->header_storage_size);
+    }
+    char* ptr = conn->header_storage + conn->header_storage_offset;
+    conn->header_storage_offset += size;
+    return ptr;
+}
+
 static int on_header_field(llhttp_t* parser, const char* at, size_t length) {
     uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
-    if (conn->header_count > 0 && conn->headers[conn->header_count - 1][1].at == NULL) {
-        conn->headers[conn->header_count - 1][1].at = at;
+    if (conn->last_header_was_value) {
+        if (conn->header_count >= MAX_HEADERS) return HPE_USER;
+        conn->header_count++;
+        uvhttp_str_t* field = &conn->headers[conn->header_count - 1][0];
+        char* dest = allocate_in_header_storage(conn, length);
+        memcpy(dest, at, length);
+        field->at = dest;
+        field->length = length;
         conn->headers[conn->header_count - 1][1].length = 0;
+    } else {
+        uvhttp_str_t* field = &conn->headers[conn->header_count - 1][0];
+        char* dest = allocate_in_header_storage(conn, length);
+        memcpy(dest, field->at, field->length);
+        memcpy(dest + field->length, at, length);
+        field->at = dest;
+        field->length += length;
     }
-    
-    if (conn->header_count < MAX_HEADERS) {
-        conn->headers[conn->header_count][0].at = at;
-        conn->headers[conn->header_count][0].length = length;
-        conn->headers[conn->header_count][1].at = NULL;
-        conn->headers[conn->header_count][1].length = 0;
-    }
+    conn->last_header_was_value = 0;
     return 0;
 }
 
 static int on_header_value(llhttp_t* parser, const char* at, size_t length) {
     uvhttp_connection_t* conn = (uvhttp_connection_t*)parser->data;
-    if (conn->header_count < MAX_HEADERS) {
-        conn->headers[conn->header_count][1].at = at;
-        conn->headers[conn->header_count][1].length = length;
-        conn->header_count++;
+    uvhttp_str_t* value = &conn->headers[conn->header_count - 1][1];
+    if (conn->last_header_was_value) {
+        char* dest = allocate_in_header_storage(conn, length);
+        memcpy(dest, value->at, value->length);
+        memcpy(dest + value->length, at, length);
+        value->at = dest;
+        value->length += length;
+    } else {
+        char* dest = allocate_in_header_storage(conn, length);
+        memcpy(dest, at, length);
+        value->at = dest;
+        value->length = length;
     }
+    conn->last_header_was_value = 1;
     return 0;
 }
 
