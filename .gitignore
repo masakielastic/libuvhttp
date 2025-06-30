@@ -1,5 +1,8 @@
 # Build artifacts
 simple_server
+tls_server
+chunked_server
+run_tests
 *.o
 *.out
 
