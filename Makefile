@@ -4,34 +4,42 @@ CFLAGS ?= -Wall -g -I.
 LDFLAGS ?=
 LDLIBS ?= -luv -lssl -lcrypto
 
-# Target executable
-TARGET = simple_server
+# Target executables
+TARGETS = simple_server tls_server
 
-# Source file for the example
-SRC = examples/simple_server.c uvhttp.c llhttp.c api.c http.c
+# Source files for the examples
+SRC_simple_server = examples/simple_server.c uvhttp.c llhttp.c api.c http.c
+SRC_tls_server = examples/tls_server.c uvhttp.c llhttp.c api.c http.c
 
-.PHONY: all clean run help
+.PHONY: all clean run-simple run-tls help
 
-all: $(TARGET)
+all: $(TARGETS)
 
-# Build the target executable
-$(TARGET): $(SRC) uvhttp.h
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC) $(LDLIBS)
+# Build targets
+simple_server: $(SRC_simple_server) uvhttp.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC_simple_server) $(LDLIBS)
 
-# Run the server
-run: all
-	./$(TARGET) $(ARGS)
+tls_server: $(SRC_tls_server) uvhttp.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC_tls_server) $(LDLIBS)
+
+# Run servers
+run-simple: simple_server
+	./simple_server $(ARGS)
+
+run-tls: tls_server
+	./tls_server $(ARGS)
 
 # Clean up build artifacts
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGETS)
 
 # Show help
 help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all       Build the server executable (default)"
-	@echo "  run       Run the server. Use ARGS to pass arguments (e.g., make run ARGS=8888)"
-	@echo "  clean     Remove build artifacts"
-	@echo "  help      Show this help message"
+	@echo "  all         Build all server executables (default)"
+	@echo "  run-simple  Run the simple HTTP server. Use ARGS to pass arguments (e.g., make run-simple ARGS=8080)"
+	@echo "  run-tls     Run the TLS (HTTPS) server. Use ARGS to pass arguments (e.g., make run-tls ARGS=8443)"
+	@echo "  clean       Remove build artifacts"
+	@echo "  help        Show this help message"
