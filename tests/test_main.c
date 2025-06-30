@@ -4,6 +4,7 @@
 #include <uv.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <string.h>
 
 // --- Test Context & Client Logic ---
 
@@ -11,7 +12,7 @@
 #define TEST_TLS_PORT 8889
 #define TEST_CERT_FILE "tests/test_cert.pem"
 #define TEST_KEY_FILE "tests/test_key.pem"
-#define TEST_BUFFER_SIZE 1024
+#define TEST_BUFFER_SIZE 4096
 
 typedef struct {
     // Test state
@@ -19,7 +20,8 @@ typedef struct {
     int server_close_called;
     int client_close_called;
     int error_cb_called;
-    
+    int tls_handshake_complete;
+
     // Buffers
     char response_buffer[TEST_BUFFER_SIZE];
     size_t response_len;
@@ -34,12 +36,11 @@ typedef struct {
     uv_write_t write_req;
 
     // TLS client state
+    int tls_enabled;
     SSL_CTX* ssl_ctx;
     SSL* ssl;
     BIO* read_bio;
     BIO* write_bio;
-    int tls_handshake_complete;
-    int tls_enabled;
 } test_context_t;
 
 static void on_server_close(uv_handle_t* handle) {
@@ -49,14 +50,41 @@ static void on_server_close(uv_handle_t* handle) {
 
 static void on_client_close(uv_handle_t* handle) {
     test_context_t* ctx = (test_context_t*)handle->data;
+    if (ctx->ssl) {
+        SSL_free(ctx->ssl);
+        ctx->ssl = NULL;
+    }
+    if (ctx->ssl_ctx) {
+        SSL_CTX_free(ctx->ssl_ctx);
+        ctx->ssl_ctx = NULL;
+    }
     ctx->client_close_called = 1;
 }
+
+static void client_do_write(test_context_t* ctx, const char* data, size_t len);
+static int client_do_handshake(test_context_t* ctx);
 
 static void on_client_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     test_context_t* ctx = (test_context_t*)stream->data;
     if (nread > 0) {
-        memcpy(ctx->response_buffer + ctx->response_len, buf->base, nread);
-        ctx->response_len += nread;
+        if (ctx->tls_enabled) {
+            BIO_write(ctx->read_bio, buf->base, nread);
+            if (!ctx->tls_handshake_complete) {
+                if (client_do_handshake(ctx) < 0) {
+                    uv_close((uv_handle_t*)stream, on_client_close);
+                    http_server_close(ctx->server, on_server_close);
+                    return;
+                }
+            }
+            
+            int bytes_read = SSL_read(ctx->ssl, ctx->response_buffer + ctx->response_len, TEST_BUFFER_SIZE - ctx->response_len);
+            if (bytes_read > 0) {
+                ctx->response_len += bytes_read;
+            }
+        } else {
+            memcpy(ctx->response_buffer + ctx->response_len, buf->base, nread);
+            ctx->response_len += nread;
+        }
     } else {
         uv_close((uv_handle_t*)stream, on_client_close);
         http_server_close(ctx->server, on_server_close);
@@ -69,12 +97,67 @@ static void on_client_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t
 }
 
 static void on_client_write(uv_write_t* req, int status) {
-    free(req->data); // Free the request string buffer
+    free(req->data);
     if (status != 0) {
         fprintf(stderr, "write failed: %s\n", uv_strerror(status));
         return;
     }
     uv_read_start((uv_stream_t*)req->handle, on_client_alloc, on_client_read);
+}
+
+static void client_do_write(test_context_t* ctx, const char* data, size_t len) {
+    if (ctx->tls_enabled) {
+        SSL_write(ctx->ssl, data, len);
+        int pending = BIO_pending(ctx->write_bio);
+        if (pending > 0) {
+            char* buf_data = (char*)malloc(pending);
+            int bytes_read = BIO_read(ctx->write_bio, buf_data, pending);
+            if (bytes_read > 0) {
+                uv_buf_t* write_buf = malloc(sizeof(uv_buf_t));
+                write_buf->base = buf_data;
+                write_buf->len = bytes_read;
+                ctx->write_req.data = write_buf;
+                uv_write(&ctx->write_req, (uv_stream_t*)&ctx->client_socket, write_buf, 1, on_client_write);
+            } else {
+                free(buf_data);
+            }
+        }
+    } else {
+        uv_buf_t* write_buf = malloc(sizeof(uv_buf_t));
+        write_buf->base = (char*)data;
+        write_buf->len = len;
+        ctx->write_req.data = write_buf;
+        uv_write(&ctx->write_req, (uv_stream_t*)&ctx->client_socket, write_buf, 1, on_client_write);
+    }
+}
+
+static int client_do_handshake(test_context_t* ctx) {
+    int r = SSL_do_handshake(ctx->ssl);
+    if (r == 1) {
+        ctx->tls_handshake_complete = 1;
+        char* req_str = (char*)((uv_buf_t*)ctx->write_req.data)->base;
+        client_do_write(ctx, req_str, strlen(req_str));
+        return 0;
+    }
+    int err = SSL_get_error(ctx->ssl, r);
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        int pending = BIO_pending(ctx->write_bio);
+        if (pending > 0) {
+            char* buf_data = (char*)malloc(pending);
+            int bytes_read = BIO_read(ctx->write_bio, buf_data, pending);
+            if (bytes_read > 0) {
+                uv_buf_t* write_buf = malloc(sizeof(uv_buf_t));
+                write_buf->base = buf_data;
+                write_buf->len = bytes_read;
+                ctx->write_req.data = write_buf;
+                uv_write(&ctx->write_req, (uv_stream_t*)&ctx->client_socket, write_buf, 1, on_client_write);
+            } else {
+                free(buf_data);
+            }
+        }
+        return 0;
+    }
+    return -1;
 }
 
 static void on_client_connect(uv_connect_t* req, int status) {
@@ -85,12 +168,18 @@ static void on_client_connect(uv_connect_t* req, int status) {
         http_server_close(ctx->server, on_server_close);
         return;
     }
-    uv_write(&ctx->write_req, (uv_stream_t*)&ctx->client_socket, (const uv_buf_t*)ctx->write_req.data, 1, on_client_write);
+    if (ctx->tls_enabled) {
+        client_do_handshake(ctx);
+    } else {
+        char* req_str = (char*)((uv_buf_t*)ctx->write_req.data)->base;
+        client_do_write(ctx, req_str, strlen(req_str));
+    }
 }
 
 static void run_test(http_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
     test_context_t* ctx = (test_context_t*)calloc(1, sizeof(test_context_t));
     TEST_CHECK(ctx != NULL);
+    ctx->tls_enabled = config->tls_enabled;
 
     uv_loop_init(&ctx->loop);
 
@@ -110,8 +199,17 @@ static void run_test(http_server_config_t* config, const char* req_str, void (*t
     write_buf->len = strlen(req_str);
     ctx->write_req.data = write_buf;
 
+    if (ctx->tls_enabled) {
+        ctx->ssl_ctx = SSL_CTX_new(TLS_client_method());
+        ctx->ssl = SSL_new(ctx->ssl_ctx);
+        ctx->read_bio = BIO_new(BIO_s_mem());
+        ctx->write_bio = BIO_new(BIO_s_mem());
+        SSL_set_bio(ctx->ssl, ctx->read_bio, ctx->write_bio);
+        SSL_set_connect_state(ctx->ssl);
+    }
+
     struct sockaddr_in dest;
-    uv_ip4_addr("127.0.0.1", config->tls_enabled ? TEST_TLS_PORT : TEST_PORT, &dest);
+    uv_ip4_addr("127.0.0.1", config->port, &dest);
     uv_tcp_connect(&ctx->connect_req, &ctx->client_socket, (const struct sockaddr*)&dest, on_client_connect);
 
     uv_run(&ctx->loop, UV_RUN_DEFAULT);
