@@ -2,3 +2,6 @@
 simple_server
 *.o
 *.out
+
+# Certificates
+*.pem
