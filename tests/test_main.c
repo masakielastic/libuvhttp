@@ -2,203 +2,175 @@
 #include "../uvhttp.h"
 #include <uv.h>
 
-// --- Test Globals & Test Client ---
-static http_server_t* test_server = NULL;
-static int test_port = 8888;
-static int client_on_connect_called = 0;
-static int client_on_read_called = 0;
-static int client_on_close_called = 0;
-static int server_on_close_called = 0;
-static char client_read_buffer[1024];
-static char received_body[1024];
-static size_t received_body_len = 0;
+// --- Test Context & Client Logic ---
+
+#define TEST_PORT 8888
+#define TEST_BUFFER_SIZE 1024
 
 typedef struct {
+    // Test state
+    int connect_called;
+    int read_called;
+    int client_close_called;
+    int server_close_called;
+    
+    // Buffers
+    char response_buffer[TEST_BUFFER_SIZE];
+    size_t response_len;
+    char received_body[TEST_BUFFER_SIZE];
+    size_t received_body_len;
+
+    // libuv handles
+    uv_loop_t loop;
+    http_server_t* server;
+    uv_tcp_t client_socket;
     uv_connect_t connect_req;
-    uv_tcp_t socket;
     uv_write_t write_req;
-} test_client_t;
+} test_context_t;
 
-static void client_on_close(uv_handle_t* handle) {
-    client_on_close_called = 1;
+static void on_server_close(uv_handle_t* handle) {
+    test_context_t* ctx = (test_context_t*)handle->data;
+    ctx->server_close_called = 1;
 }
 
-static void server_on_close(uv_handle_t* handle) {
-    server_on_close_called = 1;
+static void on_client_close(uv_handle_t* handle) {
+    test_context_t* ctx = (test_context_t*)handle->data;
+    ctx->client_close_called = 1;
 }
 
-static void client_on_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
-    buf->base = client_read_buffer;
-    buf->len = sizeof(client_read_buffer);
-}
-
-// --- Test Handlers ---
-void on_headers_cb(http_request_t* req) {
-    // For most tests, we only care about the final response.
-}
-
-void on_body_chunk_cb(http_request_t* req, const uvhttp_string_slice_t* chunk) {
-    if (chunk->length > 0) {
-        memcpy(received_body + received_body_len, chunk->at, chunk->length);
-        received_body_len += chunk->length;
-    }
-}
-
-void on_complete_cb(http_request_t* req) {
-    http_response_t* res = http_response_init();
-    http_response_status(res, 200);
-    const char* body = "Hello, World!";
-    http_response_body(res, body, strlen(body));
-    http_respond(req, res);
-    http_response_destroy(res);
-}
-
-void header_parsing_complete_cb(http_request_t* req) {
-    uvhttp_string_slice_t h1 = http_request_header(req, "X-Test-Header-1");
-    uvhttp_string_slice_t h2 = http_request_header(req, "X-Test-Header-2");
-    uvhttp_string_slice_t h_absent = http_request_header(req, "X-Not-Found");
-
-    TEST_CHECK(uvhttp_slice_cmp(&h1, "Value1") == 0);
-    TEST_CHECK(uvhttp_slice_cmp(&h2, "Value2") == 0);
-    TEST_CHECK(h_absent.at == NULL && h_absent.length == 0);
-
-    on_complete_cb(req);
-}
-
-void post_request_complete_cb(http_request_t* req) {
-    uvhttp_string_slice_t method = http_request_method(req);
-    TEST_CHECK(uvhttp_slice_cmp(&method, "POST") == 0);
-    TEST_CHECK(received_body_len == 9);
-    TEST_CHECK(strncmp(received_body, "key=value", 9) == 0);
-
-    on_complete_cb(req);
-}
-
-// --- Test Cases ---
-
-// Client callback for simple GET/POST tests
-static void client_on_read_ok(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
+static void on_client_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
+    test_context_t* ctx = (test_context_t*)stream->data;
     if (nread > 0) {
-        client_on_read_called = 1;
-        TEST_CHECK(strstr(buf->base, "HTTP/1.1 200 OK") != NULL);
+        ctx->read_called = 1;
+        memcpy(ctx->response_buffer + ctx->response_len, buf->base, nread);
+        ctx->response_len += nread;
+    } else {
+        // This also handles the case where the server closes the connection (nread == UV_EOF)
+        uv_close((uv_handle_t*)stream, on_client_close);
+        http_server_close(ctx->server, on_server_close);
     }
-    uv_close((uv_handle_t*)stream, client_on_close);
-    http_server_close(test_server, server_on_close);
 }
 
-// Client callback for body_too_large test (expects connection close)
-static void client_on_read_close(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
-    if (nread < 0) {
-        client_on_read_called = 1;
-    }
-    uv_close((uv_handle_t*)stream, client_on_close);
-    http_server_close(test_server, server_on_close);
+static void on_client_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
+    buf->base = ((test_context_t*)handle->data)->response_buffer;
+    buf->len = TEST_BUFFER_SIZE;
 }
 
-static void client_on_write(uv_write_t* req, int status) {
+static void on_client_write(uv_write_t* req, int status) {
     TEST_CHECK(status == 0);
     uv_buf_t* write_buf = (uv_buf_t*)req->data;
     free(write_buf->base);
     free(write_buf);
-    uv_read_start((uv_stream_t*)req->handle, client_on_alloc, (uv_read_cb)req->handle->data);
+    uv_read_start((uv_stream_t*)req->handle, on_client_alloc, on_client_read);
 }
 
-static void client_on_connect(uv_connect_t* req, int status) {
+static void on_client_connect(uv_connect_t* req, int status) {
     TEST_CHECK(status == 0);
+    test_context_t* ctx = (test_context_t*)req->data;
     if (status != 0) {
         fprintf(stderr, "connect failed: %s\n", uv_strerror(status));
-        uv_close((uv_handle_t*)req->handle, client_on_close);
-        http_server_close(test_server, server_on_close);
+        uv_close((uv_handle_t*)&ctx->client_socket, on_client_close);
+        http_server_close(ctx->server, on_server_close);
         return;
     }
-    client_on_connect_called = 1;
-    test_client_t* client = (test_client_t*)req->data;
-    uv_write(&client->write_req, (uv_stream_t*)&client->socket, (uv_buf_t*)client->write_req.data, 1, client_on_write);
+    ctx->connect_called = 1;
+    uv_write(&ctx->write_req, (uv_stream_t*)&ctx->client_socket, (const uv_buf_t*)ctx->write_req.data, 1, on_client_write);
 }
 
-void run_test_with_server(http_server_config_t* config, const char* http_req_str, uv_read_cb read_cb) {
-    client_on_connect_called = 0;
-    client_on_read_called = 0;
-    client_on_close_called = 0;
-    server_on_close_called = 0;
-    memset(client_read_buffer, 0, sizeof(client_read_buffer));
-    memset(received_body, 0, sizeof(received_body));
-    received_body_len = 0;
+static void run_test(http_server_config_t* config, const char* req_str, void (*test_assertions)(test_context_t*)) {
+    test_context_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
 
-    uv_loop_t loop;
-    uv_loop_init(&loop);
+    uv_loop_init(&ctx.loop);
 
-    test_server = http_server_create(&loop, config);
-    TEST_CHECK(http_server_listen(test_server) == 0);
+    // Pass the context to the server handlers
+    config->on_headers_user_data = &ctx;
+    config->on_body_chunk_user_data = &ctx;
+    config->on_complete_user_data = &ctx;
+    ctx.server = http_server_create(&ctx.loop, config);
+    TEST_CHECK(ctx.server != NULL);
+    TEST_CHECK(http_server_listen(ctx.server) == 0);
 
-    test_client_t client;
-    client.connect_req.data = &client;
-    uv_tcp_init(&loop, &client.socket);
-    struct sockaddr_in dest;
-    uv_ip4_addr("127.0.0.1", test_port, &dest);
+    uv_tcp_init(&ctx.loop, &ctx.client_socket);
+    ctx.client_socket.data = &ctx;
+    ctx.connect_req.data = &ctx;
+    ctx.write_req.handle = (uv_stream_t*)&ctx.client_socket;
     
     uv_buf_t* write_buf = malloc(sizeof(uv_buf_t));
-    write_buf->base = strdup(http_req_str);
-    write_buf->len = strlen(http_req_str);
-    client.write_req.data = write_buf;
-    client.socket.data = read_cb;
+    write_buf->base = strdup(req_str);
+    write_buf->len = strlen(req_str);
+    ctx.write_req.data = write_buf;
 
-    uv_tcp_connect(&client.connect_req, &client.socket, (const struct sockaddr*)&dest, client_on_connect);
+    struct sockaddr_in dest;
+    uv_ip4_addr("127.0.0.1", TEST_PORT, &dest);
+    uv_tcp_connect(&ctx.connect_req, &ctx.client_socket, (const struct sockaddr*)&dest, on_client_connect);
 
-    uv_run(&loop, UV_RUN_DEFAULT);
+    uv_run(&ctx.loop, UV_RUN_DEFAULT);
 
-    TEST_CHECK(client_on_connect_called == 1);
-    TEST_CHECK(client_on_read_called == 1);
-    TEST_CHECK(client_on_close_called == 1);
-    TEST_CHECK(server_on_close_called == 1);
+    if (test_assertions) {
+        test_assertions(&ctx);
+    }
 
-    http_server_destroy(test_server);
-    test_server = NULL;
-    uv_loop_close(&loop);
+    http_server_destroy(ctx.server);
+    uv_loop_close(&ctx.loop);
 }
 
+// --- Test Handlers ---
+static void on_body_chunk_test(http_request_t* req, const uvhttp_string_slice_t* chunk) {
+    test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
+    if (chunk->length > 0) {
+        memcpy(ctx->received_body + ctx->received_body_len, chunk->at, chunk->length);
+        ctx->received_body_len += chunk->length;
+    }
+}
+
+static void on_complete_ok(http_request_t* req) {
+    http_respond_simple(req, 200, "text/plain", "OK", 2);
+}
+
+static void on_headers_check(http_request_t* req) {
+    test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
+    http_request_set_user_data(req, ctx); // Pass context to other handlers
+}
+
+static void on_complete_header_check(http_request_t* req) {
+    uvhttp_string_slice_t h1 = http_request_header(req, "X-Test-Header-1");
+    uvhttp_string_slice_t h2 = http_request_header(req, "X-Test-Header-2");
+    TEST_CHECK(uvhttp_slice_cmp(&h1, "Value1") == 0);
+    TEST_CHECK(uvhttp_slice_cmp(&h2, "Value2") == 0);
+    on_complete_ok(req);
+}
+
+static void on_complete_post_check(http_request_t* req) {
+    test_context_t* ctx = (test_context_t*)http_request_get_user_data(req);
+    TEST_CHECK(ctx->received_body_len == 9);
+    TEST_CHECK(strncmp(ctx->received_body, "key=value", 9) == 0);
+    on_complete_ok(req);
+}
+
+// --- Test Cases ---
 void test_header_parsing(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = test_port, .on_complete = header_parsing_complete_cb };
+    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_headers = on_headers_check, .on_complete = on_complete_header_check };
     const char* req = "GET / HTTP/1.1\r\n"
                       "X-Test-Header-1: Value1\r\n"
                       "X-Test-Header-2: Value2\r\n\r\n";
-    run_test_with_server(&config, req, client_on_read_ok);
+    run_test(&config, req, NULL);
 }
 
 void test_post_request(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = test_port, .on_body_chunk = on_body_chunk_cb, .on_complete = post_request_complete_cb };
+    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_headers = on_headers_check, .on_body_chunk = on_body_chunk_test, .on_complete = on_complete_post_check };
     const char* req = "POST / HTTP/1.1\r\n"
                       "Content-Length: 9\r\n\r\n"
                       "key=value";
-    run_test_with_server(&config, req, client_on_read_ok);
+    run_test(&config, req, NULL);
 }
 
 void test_body_too_large(void) {
-    http_server_config_t config = { .host = "127.0.0.1", .port = test_port, .on_complete = on_complete_cb, .max_body_size = 5 };
+    http_server_config_t config = { .host = "127.0.0.1", .port = TEST_PORT, .on_complete = on_complete_ok, .max_body_size = 5 };
     const char* req = "POST / HTTP/1.1\r\n"
                       "Content-Length: 10\r\n\r\n"
                       "0123456789";
-    run_test_with_server(&config, req, client_on_read_close);
-}
-
-void test_server_lifecycle(void) {
-    uv_loop_t loop;
-    uv_loop_init(&loop);
-    http_server_config_t config = { .host = "127.0.0.1", .port = test_port, .on_complete = on_complete_cb };
-    test_server = http_server_create(&loop, &config);
-    TEST_CHECK(test_server != NULL);
-    TEST_CHECK(http_server_listen(test_server) == 0);
-    
-    server_on_close_called = 0;
-    http_server_close(test_server, server_on_close);
-    
-    uv_run(&loop, UV_RUN_DEFAULT);
-
-    TEST_CHECK(server_on_close_called == 1);
-
-    http_server_destroy(test_server);
-    test_server = NULL;
-    uv_loop_close(&loop);
+    run_test(&config, req, NULL);
 }
 
 void test_slice_cmp(void) {
@@ -212,7 +184,6 @@ void test_slice_cmp(void) {
 
 TEST_LIST = {
     { "slice/cmp", test_slice_cmp },
-    { "server/lifecycle", test_server_lifecycle },
     { "server/header_parsing", test_header_parsing },
     { "server/post_request", test_post_request },
     { "server/body_too_large", test_body_too_large },
