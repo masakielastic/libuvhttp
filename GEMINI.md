@@ -8,6 +8,10 @@ This document provides context and guidelines for the AI assistant working on th
 
 A key feature of this library is its **zero-copy parsing** mechanism for request headers, which minimizes memory allocations and data copying to achieve high performance.
 
+### Core Design Constraint: Single-Threaded Operation
+
+A fundamental design principle of this project is that it is intended for **single-threaded environments**, primarily for use cases like PHP extensions. The library is **not thread-safe**. All operations related to the server, requests, and responses must be performed on the same thread that runs the `libuv` event loop. This constraint must be respected in all future development and code modifications.
+
 ## Technical Background
 
 ### Core Components
