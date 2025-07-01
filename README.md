@@ -61,7 +61,7 @@ int main() {
 
     // Configure the server
     uvhttp_server_config_t config = {
-        .host = "0.0.0.0",
+        .host = "127.0.0.1",
         .port = 8080,
         .on_complete = on_request_complete,
     };
