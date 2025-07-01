@@ -38,52 +38,58 @@ Here is a minimal example of an HTTP server:
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <uv.h>
 
 // Request handler callback
-void my_handler(http_request_t* req) {
-    // Print the request method and target using the zero-copy slice API
+void on_request_complete(uvhttp_request_t* req) {
+    // Print the request method and target using the zero-copy string API
     printf("Request received: ");
-    uvhttp_string_slice_t method = http_request_method(req);
-    uvhttp_slice_print(&method);
+    uvhttp_str_t method = uvhttp_request_method(req);
+    uvhttp_str_print(&method);
     printf(" ");
-    uvhttp_string_slice_t target = http_request_target(req);
-    uvhttp_slice_print(&target);
+    uvhttp_str_t target = uvhttp_request_target(req);
+    uvhttp_str_print(&target);
     printf("\n");
 
-    // Create and send a response
-    http_response_t* res = http_response_init();
-    http_response_status(res, 200);
-    http_response_header(res, "Content-Type", "text/plain");
+    // Create and send a simple response
     const char* body = "Hello, World!";
-    http_response_body(res, body, strlen(body));
-
-    http_respond(req, res);
-    http_response_destroy(res);
+    uvhttp_respond_simple(req, 200, "text/plain", body, strlen(body));
 }
 
 int main() {
+    uv_loop_t* loop = uv_default_loop();
+
     // Configure the server
-    http_server_config_t config = {
+    uvhttp_server_config_t config = {
         .host = "0.0.0.0",
         .port = 8080,
-        .handler = my_handler,
-        .tls_enabled = 0, // TLS is disabled
-        .max_body_size = 8 * 1024 * 1024 // 8MB limit
+        .on_complete = on_request_complete,
     };
 
     // Create the server
-    http_server_t* server = http_server_create(&config);
+    uvhttp_server_t* server = uvhttp_server_create(loop, &config);
     if (!server) {
         fprintf(stderr, "Failed to create server.\n");
         return 1;
     }
 
     // Start listening for connections
+    if (uvhttp_server_listen(server) != 0) {
+        fprintf(stderr, "Failed to listen on http://%s:%d\n", config.host, config.port);
+        uvhttp_server_destroy(server);
+        return 1;
+    }
+    
     printf("Server listening on http://%s:%d\n", config.host, config.port);
-    http_server_listen(server);
 
-    // Clean up
-    http_server_destroy(server);
+    // Run the event loop
+    uv_run(loop, UV_RUN_DEFAULT);
+
+    // Clean up (this part will not be reached in this simple example
+    // unless the loop is stopped elsewhere)
+    uvhttp_server_destroy(server);
+    uv_loop_close(loop);
+    
     return 0;
 }
 ```
