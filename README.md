@@ -4,6 +4,10 @@ A simple and high-performance HTTP/1.1 server library built on `libuv` and `llht
 
 `libuvhttp` is a single-header library designed for ease of use and high performance. It leverages the asynchronous I/O capabilities of `libuv` and the efficiency of the `llhttp` parser. It features a zero-copy parsing approach for headers to minimize overhead and supports TLS for secure connections via OpenSSL.
 
+### Design Philosophy
+
+This library is primarily designed for use within single-threaded environments, such as a PHP extension. The core architecture is built around a single `libuv` event loop and is not thread-safe by default. All interactions with the server and its requests should be performed on the same thread where the `uv_run` loop is executed.
+
 ## Features
 
 -   **Asynchronous I/O**: Built on `libuv` for non-blocking network I/O.
